@@ -80,7 +80,7 @@
 
 <body>
   <div class="container">
-    <h1>Find the Nearest Place</h1>
+    <h1>Find the Nearest Places</h1>
 
     <div class="controls">
       <input
@@ -113,7 +113,7 @@
   <script>
     let map;
     let originMarker;
-    let resultMarker;
+    let resultMarkers = [];
     const cache = {};
 
     function initMap(lat, lon) {
@@ -123,12 +123,17 @@
       }).addTo(map);
     }
 
+    function clearResults() {
+      resultMarkers.forEach(m => map.removeLayer(m));
+      resultMarkers = [];
+    }
+
     function setOrigin(lat, lon, label) {
       if (!map) initMap(lat, lon);
       map.setView([lat, lon], 14);
 
       if (originMarker) map.removeLayer(originMarker);
-      if (resultMarker) map.removeLayer(resultMarker);
+      clearResults();
 
       originMarker = L.marker([lat, lon])
         .addTo(map)
@@ -182,14 +187,14 @@
       const cacheKey = `${lat.toFixed(3)}_${lon.toFixed(3)}_${type}`;
 
       if (cache[cacheKey]) {
-        displayResult(cache[cacheKey], lat, lon);
+        displayResults(cache[cacheKey], lat, lon);
         return;
       }
 
-      output.textContent = "Searching for nearest place...";
+      output.textContent = "Searching for nearest places...";
 
       let filter = "";
-      let radius = 5000;
+      let radius = 3000;
 
       if (type === "station") {
         filter = `node["railway"="station"](around:${radius},${lat},${lon});`;
@@ -233,7 +238,7 @@
         return;
       }
 
-      const nearest = data.elements
+      const results = data.elements
         .map(el => {
           const lat2 = el.lat || el.center.lat;
           const lon2 = el.lon || el.center.lon;
@@ -244,28 +249,38 @@
             distance: getDistance(lat, lon, lat2, lon2)
           };
         })
-        .sort((a, b) => a.distance - b.distance)[0];
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 3);
 
-      cache[cacheKey] = nearest;
-      displayResult(nearest, lat, lon);
+      cache[cacheKey] = results;
+      displayResults(results, lat, lon);
     }
 
-    function displayResult(nearest, lat, lon) {
-      resultMarker = L.marker([nearest.lat, nearest.lon])
-        .addTo(map)
-        .bindPopup(nearest.name)
-        .openPopup();
+    function displayResults(results, lat, lon) {
+      clearResults();
 
-      map.fitBounds([
-        [lat, lon],
-        [nearest.lat, nearest.lon]
-      ]);
+      const bounds = [[lat, lon]];
+      let html = "<strong>Closest results:</strong><br><br>";
 
-      document.getElementById("output").innerHTML = `
-        <strong>Nearest result:</strong><br>
-        ${nearest.name}<br>
-        <span class="distance">${nearest.distance.toFixed(2)} km away</span>
-      `;
+      results.forEach((place, index) => {
+        const marker = L.marker([place.lat, place.lon])
+          .addTo(map)
+          .bindPopup(`${index + 1}. ${place.name}`);
+
+        resultMarkers.push(marker);
+        bounds.push([place.lat, place.lon]);
+
+        const medal = ["🥇", "🥈", "🥉"][index];
+
+        html += `
+          ${medal} ${place.name}<br>
+          <span class="distance">${place.distance.toFixed(2)} km away</span><br><br>
+        `;
+      });
+
+      map.fitBounds(bounds);
+
+      document.getElementById("output").innerHTML = html;
     }
 
     function getDistance(lat1, lon1, lat2, lon2) {
@@ -286,3 +301,4 @@
   </script>
 </body>
 </html>
+add 2nd
