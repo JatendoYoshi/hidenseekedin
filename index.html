@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Find Closest Place by Address</title>
+  <title>Fast Nearest Place Finder</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <!-- Leaflet -->
@@ -30,7 +30,7 @@
 
     .controls {
       display: grid;
-      grid-template-columns: 2fr 1fr 1fr;
+      grid-template-columns: 2fr 1fr 1fr 1fr;
       gap: 10px;
       margin-bottom: 10px;
     }
@@ -46,6 +46,10 @@
       border: none;
       border-radius: 4px;
       cursor: pointer;
+    }
+
+    button.secondary {
+      background: #6c757d;
     }
 
     #map {
@@ -76,13 +80,13 @@
 
 <body>
   <div class="container">
-    <h1>Find the Closest Place</h1>
+    <h1>Find the Nearest Place</h1>
 
     <div class="controls">
       <input
         type="text"
         id="address"
-        placeholder="Enter address or postcode"
+        placeholder="Enter address or postcode (optional)"
       />
 
       <select id="placeType">
@@ -92,13 +96,14 @@
         <option value="waitrose">🛒 Waitrose</option>
       </select>
 
-      <button onclick="findClosest()">Find Closest</button>
+      <button onclick="searchByAddress()">Search by Address</button>
+      <button class="secondary" onclick="searchByLocation()">Use My Location</button>
     </div>
 
     <div id="map"></div>
 
     <div id="output" class="result">
-      Enter an address or postcode and click <strong>Find Closest</strong>.
+      Enter an address or use your current location.
     </div>
   </div>
 
@@ -107,25 +112,33 @@
 
   <script>
     let map;
-    let searchMarker;
+    let originMarker;
     let resultMarker;
+    const cache = {};
 
     function initMap(lat, lon) {
       map = L.map("map").setView([lat, lon], 14);
-
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         attribution: "&copy; OpenStreetMap contributors"
       }).addTo(map);
     }
 
-    async function geocodeAddress(address) {
-      const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      return data.length ? data[0] : null;
+    function setOrigin(lat, lon, label) {
+      if (!map) initMap(lat, lon);
+      map.setView([lat, lon], 14);
+
+      if (originMarker) map.removeLayer(originMarker);
+      if (resultMarker) map.removeLayer(resultMarker);
+
+      originMarker = L.marker([lat, lon])
+        .addTo(map)
+        .bindPopup(label)
+        .openPopup();
+
+      findNearest(lat, lon);
     }
 
-    async function findClosest() {
+    async function searchByAddress() {
       const address = document.getElementById("address").value.trim();
       const output = document.getElementById("output");
 
@@ -134,70 +147,81 @@
         return;
       }
 
-      output.textContent = "Finding location...";
+      output.textContent = "Finding address...";
 
-      const location = await geocodeAddress(address);
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`
+      );
+      const data = await res.json();
 
-      if (!location) {
+      if (!data.length) {
         output.textContent = "Address not found.";
         return;
       }
 
-      const lat = parseFloat(location.lat);
-      const lon = parseFloat(location.lon);
+      setOrigin(parseFloat(data[0].lat), parseFloat(data[0].lon), "Search location");
+    }
 
-      if (!map) initMap(lat, lon);
-      map.setView([lat, lon], 14);
+    function searchByLocation() {
+      const output = document.getElementById("output");
+      output.textContent = "Getting your location...";
 
-      if (searchMarker) map.removeLayer(searchMarker);
-      if (resultMarker) map.removeLayer(resultMarker);
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          setOrigin(pos.coords.latitude, pos.coords.longitude, "You are here");
+        },
+        () => {
+          output.textContent = "Location access denied.";
+        }
+      );
+    }
 
-      searchMarker = L.marker([lat, lon])
-        .addTo(map)
-        .bindPopup("Search location")
-        .openPopup();
-
+    async function findNearest(lat, lon) {
       const type = document.getElementById("placeType").value;
+      const output = document.getElementById("output");
+      const cacheKey = `${lat.toFixed(3)}_${lon.toFixed(3)}_${type}`;
+
+      if (cache[cacheKey]) {
+        displayResult(cache[cacheKey], lat, lon);
+        return;
+      }
+
+      output.textContent = "Searching for nearest place...";
+
       let filter = "";
+      let radius = 3000;
 
       if (type === "station") {
-        filter = `
-          node["railway"="station"](around:7000,${lat},${lon});
-          way["railway"="station"](around:7000,${lat},${lon});
-          relation["railway"="station"](around:7000,${lat},${lon});
-        `;
+        filter = `node["railway"="station"](around:${radius},${lat},${lon});`;
+      }
+
+      if (type === "waitrose") {
+        filter = `node["shop"="supermarket"]["name"~"Waitrose",i](around:${radius},${lat},${lon});`;
       }
 
       if (type === "retail") {
+        radius = 4000;
         filter = `
-          way["landuse"="retail"](around:7000,${lat},${lon});
-          relation["landuse"="retail"](around:7000,${lat},${lon});
-          node["shop"="mall"](around:7000,${lat},${lon});
+          way["landuse"="retail"](around:${radius},${lat},${lon});
+          relation["landuse"="retail"](around:${radius},${lat},${lon});
         `;
       }
 
       if (type === "cemetery") {
+        radius = 4000;
         filter = `
-          way["landuse"="cemetery"](around:7000,${lat},${lon});
-          relation["landuse"="cemetery"](around:7000,${lat},${lon});
-          node["amenity"="grave_yard"](around:7000,${lat},${lon});
-        `;
-      }
-
-      if (type === "waitrose") {
-        filter = `
-          node["shop"="supermarket"]["name"~"Waitrose",i](around:7000,${lat},${lon});
-          way["shop"="supermarket"]["name"~"Waitrose",i](around:7000,${lat},${lon});
+          way["landuse"="cemetery"](around:${radius},${lat},${lon});
+          relation["landuse"="cemetery"](around:${radius},${lat},${lon});
         `;
       }
 
       const query = `
-        [out:json];
+        [out:json][timeout:10];
         (${filter});
         out center;
       `;
 
-      const res = await fetch("https://overpass-api.de/api/interpreter", {
+      const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
         method: "POST",
         body: query
       });
@@ -222,6 +246,11 @@
         })
         .sort((a, b) => a.distance - b.distance)[0];
 
+      cache[cacheKey] = nearest;
+      displayResult(nearest, lat, lon);
+    }
+
+    function displayResult(nearest, lat, lon) {
       resultMarker = L.marker([nearest.lat, nearest.lon])
         .addTo(map)
         .bindPopup(nearest.name)
@@ -232,8 +261,8 @@
         [nearest.lat, nearest.lon]
       ]);
 
-      output.innerHTML = `
-        <strong>Closest result:</strong><br>
+      document.getElementById("output").innerHTML = `
+        <strong>Nearest result:</strong><br>
         ${nearest.name}<br>
         <span class="distance">${nearest.distance.toFixed(2)} km away</span>
       `;
