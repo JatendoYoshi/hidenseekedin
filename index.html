@@ -194,7 +194,7 @@
       output.textContent = "Searching for nearest places...";
 
       let filter = "";
-      let radius = 3000;
+      let radius = 5000;
 
       if (type === "station") {
         filter = `node["railway"="station"](around:${radius},${lat},${lon});`;
