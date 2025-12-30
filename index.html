@@ -118,6 +118,8 @@ const waitroseStores = [
   { name: "Waitrose Comely Bank", lat: 55.95915605840695, lon: -3.22391060202278 }
 ];
 
+/* ---------------- MAP ---------------- */
+
 function initMap(lat, lon) {
   map = L.map("map").setView([lat, lon], 14);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
@@ -137,6 +139,8 @@ function setOrigin(lat, lon, label) {
   findNearestPlaces(lat, lon);
 }
 
+/* ---------------- SEARCH ---------------- */
+
 async function searchByAddress() {
   const address = document.getElementById("address").value.trim();
   if (!address) return alert("Please enter an address or postcode.");
@@ -152,6 +156,8 @@ function searchByLocation() {
     () => alert("Location access denied")
   );
 }
+
+/* ---------------- MAIN LOGIC ---------------- */
 
 async function findNearestPlaces(lat, lon) {
   const type = document.getElementById("placeType").value;
@@ -180,62 +186,80 @@ async function findNearestPlaces(lat, lon) {
         relation["landuse"="cemetery"](around:6000,${lat},${lon});
       `;
 
-    const query = `[out:json][timeout:10];(${filter});out center;`;
-    const res = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: query });
+    const query = `[out:json][timeout:12];(${filter});out center;`;
+    const res = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      body: query
+    });
     const data = await res.json();
 
-    results = data.elements.map(el => ({
-      name: el.tags?.name || "Unnamed location",
-      lat: el.lat || el.center.lat,
-      lon: el.lon || el.center.lon,
-      distance: getDistance(lat, lon, el.lat || el.center.lat, el.lon || el.center.lon)
-    })).sort((a,b)=>a.distance-b.distance).slice(0,3);
+    results = data.elements
+      .filter(el => el.lat || el.center)
+      .map(el => {
+        const plat = el.lat || el.center.lat;
+        const plon = el.lon || el.center.lon;
+        return {
+          name: el.tags?.name || "Unnamed location",
+          lat: plat,
+          lon: plon,
+          distance: getDistance(lat, lon, plat, plon)
+        };
+      })
+      .sort((a,b)=>a.distance-b.distance)
+      .slice(0,3);
   }
 
   const transportData = await findTransportAround(lat, lon);
   results.forEach(p => p.transport = nearestTransport(p, transportData));
+
   cache[cacheKey] = results;
   displayResults(results, lat, lon);
 }
 
+/* ---------------- TRANSPORT (FIXED) ---------------- */
+
 async function findTransportAround(lat, lon) {
   const query = `
-    [out:json][timeout:8];
+    [out:json][timeout:10];
     (
       node["highway"="bus_stop"](around:2000,${lat},${lon});
       node["railway"="station"](around:3000,${lat},${lon});
     );
-    out tags;
+    out body;
   `;
-  const res = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", body: query });
+
+  const res = await fetch("https://overpass-api.de/api/interpreter", {
+    method: "POST",
+    body: query
+  });
   const data = await res.json();
   return data.elements || [];
 }
 
 function nearestTransport(place, transportData) {
-  if (!transportData.length) return "No public transport nearby";
+  const valid = transportData
+    .filter(el => el.lat && el.lon && (el.tags.highway === "bus_stop" || el.tags.railway === "station"))
+    .map(el => {
+      const dist = getDistance(place.lat, place.lon, el.lat, el.lon);
+      const walk = Math.round((dist / 5) * 60);
 
-  const nearest = transportData.map(el => {
-    const isBus = el.tags.highway === "bus_stop";
-    const isTrain = el.tags.railway === "station";
-    if (!isBus && !isTrain) return null;
+      let label = "Far", css = "far";
+      if (walk <= 3) { label = "Very close"; css = "very-close"; }
+      else if (walk <= 8) { label = "Close"; css = "close"; }
 
-    const dist = getDistance(place.lat, place.lon, el.lat, el.lon);
-    const walk = Math.round((dist / 5) * 60);
+      return {
+        text: `${el.tags.highway === "bus_stop" ? "🚌 Bus stop" : "🚆 Train station"}: ${el.tags.name || "Unnamed"} (${dist.toFixed(2)} km · ${walk} min walk · ${label})`,
+        css,
+        distance: dist
+      };
+    })
+    .sort((a,b)=>a.distance-b.distance);
 
-    let label = "Far", css = "far";
-    if (walk <= 3) { label = "Very close"; css = "very-close"; }
-    else if (walk <= 8) { label = "Close"; css = "close"; }
-
-    return {
-      text: `${isBus ? "🚌 Bus stop" : "🚆 Train station"}: ${el.tags.name || "Unnamed"} (${dist.toFixed(2)} km · ${walk} min walk · ${label})`,
-      css,
-      distance: dist
-    };
-  }).filter(Boolean).sort((a,b)=>a.distance-b.distance)[0];
-
-  return `<span class="${nearest.css}">${nearest.text}</span>`;
+  if (!valid.length) return "No public transport nearby";
+  return `<span class="${valid[0].css}">${valid[0].text}</span>`;
 }
+
+/* ---------------- DISPLAY ---------------- */
 
 function displayResults(results, lat, lon) {
   clearResults();
@@ -254,15 +278,18 @@ function displayResults(results, lat, lon) {
   document.getElementById("output").innerHTML = html;
 }
 
+/* ---------------- DISTANCE ---------------- */
+
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
-  const dLat = (lat2-lat1)*Math.PI/180;
-  const dLon = (lon2-lon1)*Math.PI/180;
+  const dLat = (lat2-lat1) * Math.PI/180;
+  const dLon = (lon2-lon1) * Math.PI/180;
   const a =
     Math.sin(dLat/2)**2 +
-    Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*
+    Math.cos(lat1*Math.PI/180) *
+    Math.cos(lat2*Math.PI/180) *
     Math.sin(dLon/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 </script>
 </body>
