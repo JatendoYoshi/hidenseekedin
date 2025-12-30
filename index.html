@@ -20,7 +20,9 @@ body {
   padding: 20px;
 }
 
-h1 { text-align: center; }
+h1 {
+  text-align: center;
+}
 
 .controls {
   display: grid;
@@ -42,7 +44,9 @@ button {
   cursor: pointer;
 }
 
-button.secondary { background: #6c757d; }
+button.secondary {
+  background: #6c757d;
+}
 
 #map {
   height: 450px;
@@ -59,21 +63,21 @@ button.secondary { background: #6c757d; }
 
 .distance {
   font-size: 14px;
-  color: #555;
 }
 
 .transport {
   font-size: 14px;
   margin-top: 4px;
-  font-weight: bold;
 }
 
-.very-close { color: #28a745; }
-.close { color: #fd7e14; }
-.far { color: #dc3545; }
+.label-very { color: green; font-weight: bold; }
+.label-close { color: orange; font-weight: bold; }
+.label-far { color: red; font-weight: bold; }
 
 @media (max-width: 768px) {
-  .controls { grid-template-columns: 1fr; }
+  .controls {
+    grid-template-columns: 1fr;
+  }
 }
 </style>
 </head>
@@ -83,19 +87,19 @@ button.secondary { background: #6c757d; }
 <h1>Find the Nearest Places</h1>
 
 <div class="controls">
-  <input id="address" placeholder="Enter address or postcode (optional)">
+  <input id="address" placeholder="Enter address or postcode">
   <select id="placeType">
     <option value="station">🚆 Railway Station</option>
     <option value="retail">🛍️ Retail Park</option>
     <option value="cemetery">⚰️ Cemetery</option>
     <option value="waitrose">🛒 Waitrose</option>
   </select>
-  <button onclick="searchByAddress()">Search by Address</button>
+  <button onclick="searchByAddress()">Search</button>
   <button class="secondary" onclick="searchByLocation()">Use My Location</button>
 </div>
 
 <div id="map"></div>
-<div id="output" class="result">Start a search to see results.</div>
+<div id="output" class="result">Start a search.</div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -103,7 +107,6 @@ button.secondary { background: #6c757d; }
 <script>
 let map, originMarker;
 let resultMarkers = [];
-const cache = {};
 
 /* FIXED DATASETS */
 const retailParks = [
@@ -114,18 +117,16 @@ const retailParks = [
 ];
 
 const waitroseStores = [
-  { name: "Waitrose Morningside", lat: 55.929797381971866, lon: -3.208918594119695 },
-  { name: "Waitrose Comely Bank", lat: 55.95915605840695, lon: -3.22391060202278 }
+  { name: "Waitrose Comely Bank", lat: 55.95916, lon: -3.22391 },
+  { name: "Waitrose Morningside", lat: 55.92980, lon: -3.20892 }
 ];
-
-/* ---------------- MAP ---------------- */
 
 function initMap(lat, lon) {
   map = L.map("map").setView([lat, lon], 14);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 }
 
-function clearResults() {
+function clearMarkers() {
   resultMarkers.forEach(m => map.removeLayer(m));
   resultMarkers = [];
 }
@@ -133,21 +134,23 @@ function clearResults() {
 function setOrigin(lat, lon, label) {
   if (!map) initMap(lat, lon);
   map.setView([lat, lon], 14);
+
   if (originMarker) map.removeLayer(originMarker);
-  clearResults();
+  clearMarkers();
+
   originMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
   findNearestPlaces(lat, lon);
 }
 
-/* ---------------- SEARCH ---------------- */
-
 async function searchByAddress() {
-  const address = document.getElementById("address").value.trim();
-  if (!address) return alert("Please enter an address or postcode.");
+  const addr = document.getElementById("address").value.trim();
+  if (!addr) return alert("Enter an address");
 
-  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}`
+  );
   const data = await res.json();
-  if (!data.length) return alert("Address not found.");
+  if (!data.length) return alert("Not found");
 
   setOrigin(+data[0].lat, +data[0].lon, "Search location");
 }
@@ -155,134 +158,101 @@ async function searchByAddress() {
 function searchByLocation() {
   navigator.geolocation.getCurrentPosition(
     pos => setOrigin(pos.coords.latitude, pos.coords.longitude, "You are here"),
-    () => alert("Location access denied")
+    () => alert("Location denied")
   );
 }
 
-/* ---------------- MAIN LOGIC ---------------- */
-
 async function findNearestPlaces(lat, lon) {
   const type = document.getElementById("placeType").value;
-  const cacheKey = `${type}_${lat.toFixed(3)}_${lon.toFixed(3)}`;
-  if (cache[cacheKey]) return displayResults(cache[cacheKey], lat, lon);
+  let places = [];
 
-  let results = [];
-
-  if (type === "retail") {
-    results = retailParks
-      .map(p => ({ ...p, distance: getDistance(lat, lon, p.lat, p.lon) }))
-      .sort((a,b)=>a.distance-b.distance)
-      .slice(0,3);
-  }
-
-  if (type === "waitrose") {
-    results = waitroseStores
-      .map(w => ({ ...w, distance: getDistance(lat, lon, w.lat, w.lon) }))
-      .sort((a,b)=>a.distance-b.distance);
-  }
-
-  if (type === "station" || type === "cemetery") {
+  if (type === "retail") places = retailParks;
+  else if (type === "waitrose") places = waitroseStores;
+  else {
     let filter = "";
     if (type === "station")
       filter = `node["railway"="station"](around:6000,${lat},${lon});`;
-
     if (type === "cemetery")
       filter = `
         way["landuse"="cemetery"](around:6000,${lat},${lon});
         relation["landuse"="cemetery"](around:6000,${lat},${lon});
       `;
 
-    const query = `[out:json][timeout:12];(${filter});out center;`;
-    const res = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      body: query
+    const q = `[out:json];(${filter});out center;`;
+    const r = await fetch("https://overpass.kumi.systems/api/interpreter", {
+      method: "POST", body: q
     });
-    const data = await res.json();
+    const d = await r.json();
 
-    results = data.elements
-      .filter(el => el.lat || el.center)
-      .map(el => {
-        const plat = el.lat || el.center.lat;
-        const plon = el.lon || el.center.lon;
-        return {
-          name: el.tags?.name || "Unnamed location",
-          lat: plat,
-          lon: plon,
-          distance: getDistance(lat, lon, plat, plon)
-        };
-      })
-      .sort((a,b)=>a.distance-b.distance)
-      .slice(0,3);
+    places = d.elements.map(e => ({
+      name: e.tags?.name || "Unnamed",
+      lat: e.lat || e.center.lat,
+      lon: e.lon || e.center.lon
+    }));
   }
 
-  const busStops = await findBusStops(lat, lon);
-  results.forEach(p => p.transport = nearestBusStop(p, busStops));
+  places = places
+    .map(p => ({ ...p, distance: getDistance(lat, lon, p.lat, p.lon) }))
+    .sort((a,b)=>a.distance-b.distance)
+    .slice(0,3);
 
-  cache[cacheKey] = results;
-  displayResults(results, lat, lon);
+  for (const p of places) {
+    p.transport = await findClosestBusStop(p.lat, p.lon);
+  }
+
+  displayResults(places, lat, lon);
 }
 
-/* ---------------- BUS STOPS ONLY ---------------- */
-
-async function findBusStops(lat, lon) {
+/* ✅ THIS IS THE CRITICAL FIX */
+async function findClosestBusStop(lat, lon) {
   const query = `
-    [out:json][timeout:10];
+    [out:json][timeout:8];
     node["highway"="bus_stop"](around:2000,${lat},${lon});
-    out body;
+    out;
   `;
 
-  const res = await fetch("https://overpass-api.de/api/interpreter", {
+  const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
     method: "POST",
     body: query
   });
+
   const data = await res.json();
-  return data.elements || [];
+  if (!data.elements.length) return "🚌 No bus stop nearby";
+
+  const closest = data.elements
+    .map(b => ({
+      name: b.tags.name || "Unnamed bus stop",
+      distance: getDistance(lat, lon, b.lat, b.lon)
+    }))
+    .sort((a,b)=>a.distance-b.distance)[0];
+
+  const minutes = Math.round((closest.distance / 5) * 60);
+
+  let label = "label-far";
+  if (minutes <= 3) label = "label-very";
+  else if (minutes <= 8) label = "label-close";
+
+  return `<span class="${label}">🚌 ${closest.name} (${closest.distance.toFixed(2)} km · ${minutes} min walk)</span>`;
 }
-
-function nearestBusStop(place, busStops) {
-  const valid = busStops
-    .filter(b => b.lat && b.lon)
-    .map(b => {
-      const dist = getDistance(place.lat, place.lon, b.lat, b.lon);
-      const walk = Math.round((dist / 5) * 60);
-
-      let label = "Far", css = "far";
-      if (walk <= 3) { label = "Very close"; css = "very-close"; }
-      else if (walk <= 8) { label = "Close"; css = "close"; }
-
-      return {
-        text: `🚌 Bus stop: ${b.tags.name || "Unnamed"} (${dist.toFixed(2)} km · ${walk} min walk · ${label})`,
-        css,
-        distance: dist
-      };
-    })
-    .sort((a,b)=>a.distance-b.distance);
-
-  if (!valid.length) return "No bus stop nearby";
-  return `<span class="${valid[0].css}">${valid[0].text}</span>`;
-}
-
-/* ---------------- DISPLAY ---------------- */
 
 function displayResults(results, lat, lon) {
-  clearResults();
   let html = "<strong>Closest results:</strong><br><br>";
   const bounds = [[lat, lon]];
 
   results.forEach((p,i) => {
-    resultMarkers.push(L.marker([p.lat, p.lon]).addTo(map).bindPopup(p.name));
+    resultMarkers.push(L.marker([p.lat, p.lon]).addTo(map));
     bounds.push([p.lat, p.lon]);
 
-    html += `${["🥇","🥈","🥉"][i]} ${p.name}<br>
+    html += `
+      ${["🥇","🥈","🥉"][i]} ${p.name}<br>
       <span class="distance">${p.distance.toFixed(2)} km away</span><br>
-      <div class="transport">${p.transport}</div><br>`;
+      <div class="transport">${p.transport}</div><br>
+    `;
   });
 
   map.fitBounds(bounds);
   document.getElementById("output").innerHTML = html;
 }
-
-/* ---------------- DISTANCE ---------------- */
 
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
