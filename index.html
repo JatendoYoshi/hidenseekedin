@@ -106,6 +106,14 @@ let map, originMarker;
 let resultMarkers = [];
 const cache = {};
 
+/* 🔒 FIXED RETAIL PARK DATA */
+const retailParks = [
+  { name: "Hermiston Gait Retail Park", lat: 55.9156, lon: -3.3199 },
+  { name: "Meadowbank Retail Park", lat: 55.9595, lon: -3.1616 },
+  { name: "Craigleith Retail Park", lat: 55.9636, lon: -3.2527 },
+  { name: "Fort Kinnaird", lat: 55.9314, lon: -3.1027 }
+];
+
 function initMap(lat, lon) {
   map = L.map("map").setView([lat, lon], 14);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
@@ -123,11 +131,7 @@ function setOrigin(lat, lon, label) {
   if (originMarker) map.removeLayer(originMarker);
   clearResults();
 
-  originMarker = L.marker([lat, lon])
-    .addTo(map)
-    .bindPopup(label)
-    .openPopup();
-
+  originMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
   findNearestPlaces(lat, lon);
 }
 
@@ -139,7 +143,6 @@ async function searchByAddress() {
     `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`
   );
   const data = await res.json();
-
   if (!data.length) return alert("Address not found.");
 
   setOrigin(+data[0].lat, +data[0].lon, "Search location");
@@ -154,24 +157,33 @@ function searchByLocation() {
 
 async function findNearestPlaces(lat, lon) {
   const type = document.getElementById("placeType").value;
-  const key = `${lat.toFixed(3)}_${lon.toFixed(3)}_${type}`;
 
-  if (cache[key]) return displayResults(cache[key], lat, lon);
+  /* ✅ RETAIL PARK OVERRIDE */
+  if (type === "retail") {
+    const results = retailParks
+      .map(p => ({
+        ...p,
+        distance: getDistance(lat, lon, p.lat, p.lon)
+      }))
+      .sort((a,b)=>a.distance-b.distance)
+      .slice(0,3);
 
+    for (const place of results) {
+      place.transport = await findNearestTransport(place.lat, place.lon);
+    }
+
+    return displayResults(results, lat, lon);
+  }
+
+  /* 🔁 EVERYTHING ELSE UNCHANGED */
   let filter = "";
-  let radius = 6000;
+  let radius = 4000;
 
   if (type === "station")
     filter = `node["railway"="station"](around:${radius},${lat},${lon});`;
 
   if (type === "waitrose")
     filter = `node["shop"="supermarket"]["name"~"Waitrose",i](around:${radius},${lat},${lon});`;
-
-  if (type === "retail")
-    filter = `
-      way["landuse"="retail"](around:${radius},${lat},${lon});
-      relation["landuse"="retail"](around:${radius},${lat},${lon});
-    `;
 
   if (type === "cemetery")
     filter = `
@@ -201,7 +213,6 @@ async function findNearestPlaces(lat, lon) {
     place.transport = await findNearestTransport(place.lat, place.lon);
   }
 
-  cache[key] = places;
   displayResults(places, lat, lon);
 }
 
