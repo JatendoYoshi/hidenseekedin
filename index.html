@@ -107,6 +107,7 @@ button.secondary {
 <script>
 let map, originMarker;
 let resultMarkers = [];
+let cachedBusStops = [];
 
 /* FIXED DATASETS */
 const retailParks = [
@@ -135,6 +136,8 @@ function setOrigin(lat, lon, label) {
   if (!map) initMap(lat, lon);
   map.setView([lat, lon], 14);
 
+  cachedBusStops = []; // reset cache per search
+
   if (originMarker) map.removeLayer(originMarker);
   clearMarkers();
 
@@ -162,9 +165,29 @@ function searchByLocation() {
   );
 }
 
+async function fetchBusStops(lat, lon) {
+  const query = `
+    [out:json][timeout:10];
+    node["highway"="bus_stop"](around:6000,${lat},${lon});
+    out body;
+  `;
+
+  const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
+    method: "POST",
+    body: query
+  });
+
+  const data = await res.json();
+  cachedBusStops = (data.elements || []).filter(
+    s => Number.isFinite(s.lat) && Number.isFinite(s.lon)
+  );
+}
+
 async function findNearestPlaces(lat, lon) {
   const type = document.getElementById("placeType").value;
   let places = [];
+
+  await fetchBusStops(lat, lon); // ONE transport query
 
   if (type === "retail") places = retailParks;
   else if (type === "waitrose") places = waitroseStores;
@@ -198,35 +221,16 @@ async function findNearestPlaces(lat, lon) {
     .slice(0,3);
 
   for (const p of places) {
-    p.transport = await findClosestBusStop(p.lat, p.lon);
+    p.transport = findClosestBusStopFromCache(p.lat, p.lon);
   }
 
   displayResults(places, lat, lon);
 }
 
-/* ✅ COMPLETELY SAFE BUS STOP LOOKUP */
-async function findClosestBusStop(lat, lon) {
-  const query = `
-    [out:json][timeout:8];
-    node["highway"="bus_stop"](around:2000,${lat},${lon});
-    out body;
-  `;
+function findClosestBusStopFromCache(lat, lon) {
+  if (!cachedBusStops.length) return "🚌 No bus stop nearby";
 
-  const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
-    method: "POST",
-    body: query
-  });
-
-  const data = await res.json();
-  if (!data.elements || !data.elements.length) {
-    return "🚌 No bus stop nearby";
-  }
-
-  const validStops = data.elements
-    .filter(s =>
-      typeof s.lat === "number" &&
-      typeof s.lon === "number"
-    )
+  const closest = cachedBusStops
     .map(s => ({
       name: s.tags?.name || "Unnamed bus stop",
       lat: s.lat,
@@ -234,13 +238,8 @@ async function findClosestBusStop(lat, lon) {
       routes: s.tags?.route_ref || s.tags?.routes || null,
       distance: getDistance(lat, lon, s.lat, s.lon)
     }))
-    .filter(s => Number.isFinite(s.distance));
+    .sort((a,b)=>a.distance-b.distance)[0];
 
-  if (!validStops.length) {
-    return "🚌 No valid bus stop data";
-  }
-
-  const closest = validStops.sort((a,b)=>a.distance-b.distance)[0];
   const minutes = Math.round((closest.distance / 5) * 60);
 
   let label = "label-far";
