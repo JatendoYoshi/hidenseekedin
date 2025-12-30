@@ -5,7 +5,6 @@
   <title>Nearest Places Finder</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- Leaflet CSS -->
   <link
     rel="stylesheet"
     href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -76,7 +75,8 @@
       <select id="placeType">
         <option value="station">🚆 Railway Station</option>
         <option value="retail">🛍️ Retail Park</option>
-        <option value="hospital">🏥 Hospital</option>
+        <option value="cemetery">⚰️ Cemetery</option>
+        <option value="waitrose">🛒 Waitrose</option>
       </select>
       <button onclick="findNearest()">Find Nearby</button>
     </div>
@@ -88,7 +88,6 @@
     </div>
   </div>
 
-  <!-- Leaflet JS -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
@@ -122,25 +121,50 @@
         if (!map) initMap(lat, lon);
         map.setView([lat, lon], 14);
 
-        if (placeMarker) {
-          map.removeLayer(placeMarker);
-        }
+        if (placeMarker) map.removeLayer(placeMarker);
 
         const type = document.getElementById("placeType").value;
         let filter = "";
 
         if (type === "station") {
-          filter = 'node["railway"="station"]';
-        } else if (type === "retail") {
-          filter = 'node["shop"="mall"]';
-        } else if (type === "hospital") {
-          filter = 'node["amenity"="hospital"]';
+          filter = `
+            node["railway"="station"]
+            way["railway"="station"]
+            relation["railway"="station"]
+          `;
+        }
+
+        if (type === "retail") {
+          filter = `
+            node["shop"="mall"]
+            way["shop"="mall"]
+            way["landuse"="retail"]
+            relation["landuse"="retail"]
+          `;
+        }
+
+        if (type === "cemetery") {
+          filter = `
+            node["amenity"="grave_yard"]
+            way["amenity"="grave_yard"]
+            way["landuse"="cemetery"]
+            relation["landuse"="cemetery"]
+          `;
+        }
+
+        if (type === "waitrose") {
+          filter = `
+            node["shop"="supermarket"]["name"~"Waitrose",i]
+            way["shop"="supermarket"]["name"~"Waitrose",i]
+          `;
         }
 
         const query = `
           [out:json];
-          ${filter}(around:5000,${lat},${lon});
-          out;
+          (
+            ${filter}
+          )(around:7000,${lat},${lon});
+          out center;
         `;
 
         fetch("https://overpass-api.de/api/interpreter", {
@@ -149,18 +173,22 @@
         })
         .then(res => res.json())
         .then(data => {
-          if (data.elements.length === 0) {
+          if (!data.elements.length) {
             output.innerHTML = "No nearby locations found.";
             return;
           }
 
           const nearest = data.elements
-            .map(el => ({
-              name: el.tags.name || "Unnamed location",
-              lat: el.lat,
-              lon: el.lon,
-              distance: getDistance(lat, lon, el.lat, el.lon)
-            }))
+            .map(el => {
+              const lat2 = el.lat || el.center.lat;
+              const lon2 = el.lon || el.center.lon;
+              return {
+                name: el.tags?.name || "Unnamed location",
+                lat: lat2,
+                lon: lon2,
+                distance: getDistance(lat, lon, lat2, lon2)
+              };
+            })
             .sort((a, b) => a.distance - b.distance)[0];
 
           placeMarker = L.marker([nearest.lat, nearest.lon]).addTo(map)
