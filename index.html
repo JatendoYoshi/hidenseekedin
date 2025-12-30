@@ -20,9 +20,7 @@ body {
   padding: 20px;
 }
 
-h1 {
-  text-align: center;
-}
+h1 { text-align: center; }
 
 .controls {
   display: grid;
@@ -72,9 +70,7 @@ button.secondary {
 }
 
 @media (max-width: 768px) {
-  .controls {
-    grid-template-columns: 1fr;
-  }
+  .controls { grid-template-columns: 1fr; }
 }
 </style>
 </head>
@@ -104,18 +100,19 @@ button.secondary {
 <script>
 let map, originMarker;
 let resultMarkers = [];
+const cache = {};
 
-/* 🔒 FIXED DATASETS */
+/* FIXED DATASETS */
 const retailParks = [
-  { name: "Hermiston Gait Retail Park", lat: 55.92593254285609, lon:-3.307008872004746 },
-  { name: "Meadowbank Retail Park", lat: 55.95772293806939, lon: -3.165021734019846 },
-  { name: "Craigleith Retail Park", lat: 55.9579381351995,  lon: -3.242318241606514 },
-  { name: "Fort Kinnaird", lat: 55.934846278067376, lon: -3.1038279812614338 }
+  { name: "Hermiston Gait Retail Park", lat: 55.92593, lon: -3.30701 },
+  { name: "Meadowbank Retail Park", lat: 55.95772, lon: -3.16502 },
+  { name: "Craigleith Retail Park", lat: 55.95794, lon: -3.24232 },
+  { name: "Fort Kinnaird", lat: 55.93485, lon: -3.10383 }
 ];
 
 const waitroseStores = [
-  { name: "Waitrose Comely Bank", lat: 55.95915605840695, lon: -3.22391060202278 },
-  { name: "Waitrose Morningside", lat: 55.929797381971866, lon: -3.208918594119695 }
+  { name: "Waitrose Morningside", lat: 55.929797381971866, lon: -3.208918594119695 },
+  { name: "Waitrose Comely Bank", lat: 55.95915605840695, lon: -3.22391060202278 }
 ];
 
 function initMap(lat, lon) {
@@ -131,10 +128,8 @@ function clearResults() {
 function setOrigin(lat, lon, label) {
   if (!map) initMap(lat, lon);
   map.setView([lat, lon], 14);
-
   if (originMarker) map.removeLayer(originMarker);
   clearResults();
-
   originMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
   findNearestPlaces(lat, lon);
 }
@@ -142,13 +137,9 @@ function setOrigin(lat, lon, label) {
 async function searchByAddress() {
   const address = document.getElementById("address").value.trim();
   if (!address) return alert("Please enter an address or postcode.");
-
-  const res = await fetch(
-    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`
-  );
+  const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
   const data = await res.json();
   if (!data.length) return alert("Address not found.");
-
   setOrigin(+data[0].lat, +data[0].lon, "Search location");
 }
 
@@ -161,37 +152,37 @@ function searchByLocation() {
 
 async function findNearestPlaces(lat, lon) {
   const type = document.getElementById("placeType").value;
+  const cacheKey = `${type}_${lat.toFixed(3)}_${lon.toFixed(3)}`;
+  if (cache[cacheKey]) return displayResults(cache[cacheKey], lat, lon);
 
-  /* ✅ RETAIL PARK OVERRIDE */
+  /* RETAIL PARK */
   if (type === "retail") {
     const results = retailParks
       .map(p => ({ ...p, distance: getDistance(lat, lon, p.lat, p.lon) }))
       .sort((a,b)=>a.distance-b.distance)
       .slice(0,3);
 
-    for (const place of results) {
-      place.transport = await findNearestTransport(place.lat, place.lon);
-    }
-
+    const transport = await findTransportAround(lat, lon);
+    results.forEach(p => p.transport = nearestTransport(p, transport));
+    cache[cacheKey] = results;
     return displayResults(results, lat, lon);
   }
 
-  /* ✅ WAITROSE OVERRIDE */
+  /* WAITROSE */
   if (type === "waitrose") {
     const results = waitroseStores
       .map(w => ({ ...w, distance: getDistance(lat, lon, w.lat, w.lon) }))
       .sort((a,b)=>a.distance-b.distance);
 
-    for (const store of results) {
-      store.transport = await findNearestTransport(store.lat, store.lon);
-    }
-
+    const transport = await findTransportAround(lat, lon);
+    results.forEach(w => w.transport = nearestTransport(w, transport));
+    cache[cacheKey] = results;
     return displayResults(results, lat, lon);
   }
 
-  /* 🔁 UNCHANGED LOGIC */
+  /* LIVE OSM SEARCH */
   let filter = "";
-  let radius = 6000;
+  const radius = 6000;
 
   if (type === "station")
     filter = `node["railway"="station"](around:${radius},${lat},${lon});`;
@@ -203,11 +194,10 @@ async function findNearestPlaces(lat, lon) {
     `;
 
   const query = `[out:json][timeout:10];(${filter});out center;`;
-  const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
+  const res = await fetch("https://overpass-api.de/api/interpreter", {
     method: "POST",
     body: query
   });
-
   const data = await res.json();
 
   const places = data.elements
@@ -220,39 +210,39 @@ async function findNearestPlaces(lat, lon) {
     .sort((a,b)=>a.distance-b.distance)
     .slice(0,3);
 
-  for (const place of places) {
-    place.transport = await findNearestTransport(place.lat, place.lon);
-  }
+  const transport = await findTransportAround(lat, lon);
+  places.forEach(p => p.transport = nearestTransport(p, transport));
 
+  cache[cacheKey] = places;
   displayResults(places, lat, lon);
 }
 
-async function findNearestTransport(lat, lon) {
+async function findTransportAround(lat, lon) {
   const query = `
     [out:json][timeout:8];
     (
-      node["highway"="bus_stop"](around:1000,${lat},${lon});
-      node["railway"="station"](around:1500,${lat},${lon});
+      node["highway"="bus_stop"](around:2000,${lat},${lon});
+      node["railway"="station"](around:3000,${lat},${lon});
     );
     out;
   `;
-
-  const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
+  const res = await fetch("https://overpass-api.de/api/interpreter", {
     method: "POST",
     body: query
   });
-
   const data = await res.json();
-  if (!data.elements.length) return "No public transport nearby";
+  return data.elements || [];
+}
 
-  const nearest = data.elements
+function nearestTransport(place, transportData) {
+  if (!transportData.length) return "No public transport nearby";
+  const nearest = transportData
     .map(el => ({
-      type: el.tags.highway === "bus_stop" ? "🚌 Bus stop" : "🚆 Train station",
+      type: el.tags.highway ? "🚌 Bus stop" : "🚆 Train station",
       name: el.tags.name || "Unnamed",
-      distance: getDistance(lat, lon, el.lat, el.lon)
+      distance: getDistance(place.lat, place.lon, el.lat, el.lon)
     }))
     .sort((a,b)=>a.distance-b.distance)[0];
-
   return `${nearest.type}: ${nearest.name} (${nearest.distance.toFixed(2)} km)`;
 }
 
@@ -262,16 +252,11 @@ function displayResults(results, lat, lon) {
   const bounds = [[lat, lon]];
 
   results.forEach((p,i) => {
-    resultMarkers.push(
-      L.marker([p.lat, p.lon]).addTo(map).bindPopup(p.name)
-    );
+    resultMarkers.push(L.marker([p.lat, p.lon]).addTo(map).bindPopup(p.name));
     bounds.push([p.lat, p.lon]);
-
-    html += `
-      ${["🥇","🥈","🥉"][i] || "📍"} ${p.name}<br>
+    html += `${["🥇","🥈","🥉"][i]} ${p.name}<br>
       <span class="distance">${p.distance.toFixed(2)} km away</span><br>
-      <div class="transport">${p.transport}</div><br>
-    `;
+      <div class="transport">${p.transport}</div><br>`;
   });
 
   map.fitBounds(bounds);
@@ -280,14 +265,13 @@ function displayResults(results, lat, lon) {
 
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
-  const dLat = (lat2-lat1) * Math.PI/180;
-  const dLon = (lon2-lon1) * Math.PI/180;
+  const dLat = (lat2-lat1)*Math.PI/180;
+  const dLon = (lon2-lon1)*Math.PI/180;
   const a =
     Math.sin(dLat/2)**2 +
-    Math.cos(lat1*Math.PI/180) *
-    Math.cos(lat2*Math.PI/180) *
+    Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*
     Math.sin(dLon/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
 }
 </script>
 </body>
