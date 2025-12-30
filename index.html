@@ -13,13 +13,11 @@ body {
   font-family: Arial, sans-serif;
   background: #f4f6f8;
 }
-
 .container {
   max-width: 1000px;
   margin: auto;
   padding: 20px;
 }
-
 h1 { text-align: center; }
 
 .controls {
@@ -28,12 +26,10 @@ h1 { text-align: center; }
   gap: 10px;
   margin-bottom: 10px;
 }
-
 input, select, button {
   padding: 12px;
   font-size: 16px;
 }
-
 button {
   background: #007bff;
   color: white;
@@ -41,7 +37,6 @@ button {
   border-radius: 4px;
   cursor: pointer;
 }
-
 button.secondary { background: #6c757d; }
 
 #map {
@@ -91,27 +86,29 @@ button.secondary { background: #6c757d; }
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-/* ================= GLOBAL STATE ================= */
+/* ================= CONSTANTS ================= */
+
+const SEARCH_RADIUS = 6000; // metres
+const WALK_SPEED_KMH = 5;
+
+/* ================= GLOBALS ================= */
 
 let map;
 let originMarker;
-let markers = [];
-
-const SEARCH_RADIUS = 6000;
-const WALK_SPEED = 5;
+let placeMarkers = [];
 
 /* ================= FIXED DATA ================= */
 
 const retailParks = [
-  { name: "Hermiston Gait Retail Park", lat: 55.92593, lon: -3.30701 },
-  { name: "Meadowbank Retail Park", lat: 55.95772, lon: -3.16502 },
-  { name: "Craigleith Retail Park", lat: 55.95794, lon: -3.24232 },
-  { name: "Fort Kinnaird", lat: 55.93485, lon: -3.10383 }
+  { name:"Hermiston Gait Retail Park", lat:55.92593, lon:-3.30701 },
+  { name:"Meadowbank Retail Park", lat:55.95772, lon:-3.16502 },
+  { name:"Craigleith Retail Park", lat:55.95794, lon:-3.24232 },
+  { name:"Fort Kinnaird", lat:55.93485, lon:-3.10383 }
 ];
 
 const waitroseStores = [
-  { name: "Waitrose Comely Bank", lat: 55.95916, lon: -3.22391 },
-  { name: "Waitrose Morningside", lat: 55.92980, lon: -3.20892 }
+  { name:"Waitrose Comely Bank", lat:55.95916, lon:-3.22391 },
+  { name:"Waitrose Morningside", lat:55.92980, lon:-3.20892 }
 ];
 
 /* ================= MAP ================= */
@@ -122,33 +119,38 @@ function initMap(lat, lon) {
 }
 
 function clearMarkers() {
-  markers.forEach(m => map.removeLayer(m));
-  markers = [];
+  placeMarkers.forEach(m => map.removeLayer(m));
+  placeMarkers = [];
 }
 
-/* ================= SEARCH ENTRY ================= */
+/* ================= SEARCH ================= */
 
 async function searchByAddress() {
   const q = document.getElementById("address").value.trim();
-  if (!q) return alert("Enter an address");
+  if (!q) return alert("Enter an address or postcode");
 
-  const r = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`);
-  const d = await r.json();
-  if (!d.length) return alert("Not found");
+  const res = await fetch(
+    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`
+  );
+  const data = await res.json();
+  if (!data.length) return alert("Address not found");
 
-  startSearch(+d[0].lat, +d[0].lon, "Search location");
+  startSearch(Number(data[0].lat), Number(data[0].lon), "Search location");
 }
 
 function searchByLocation() {
   navigator.geolocation.getCurrentPosition(
-    p => startSearch(p.coords.latitude, p.coords.longitude, "You are here"),
+    pos => startSearch(pos.coords.latitude, pos.coords.longitude, "You are here"),
     () => alert("Location denied")
   );
 }
 
-/* ================= MASTER SEARCH ================= */
+function startSearch(lat, lon, label) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    alert("Invalid coordinates");
+    return;
+  }
 
-async function startSearch(lat, lon, label) {
   if (!map) initMap(lat, lon);
   map.setView([lat, lon], 14);
   clearMarkers();
@@ -156,12 +158,12 @@ async function startSearch(lat, lon, label) {
   if (originMarker) map.removeLayer(originMarker);
   originMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
 
-  await findNearestPlaces(lat, lon);
+  findNearestPlaces(lat, lon);
 }
 
 /* ================= PLACES ================= */
 
-async function findNearestPlaces(lat, lon) {
+async function findNearestPlaces(originLat, originLon) {
   const type = document.getElementById("placeType").value;
   let places = [];
 
@@ -170,70 +172,89 @@ async function findNearestPlaces(lat, lon) {
   else {
     let filter = "";
     if (type === "station")
-      filter = `node["railway"="station"](around:${SEARCH_RADIUS},${lat},${lon});`;
+      filter = `node["railway"="station"](around:${SEARCH_RADIUS},${originLat},${originLon});`;
     if (type === "cemetery")
       filter = `
-        way["landuse"="cemetery"](around:${SEARCH_RADIUS},${lat},${lon});
-        relation["landuse"="cemetery"](around:${SEARCH_RADIUS},${lat},${lon});
+        way["landuse"="cemetery"](around:${SEARCH_RADIUS},${originLat},${originLon});
+        relation["landuse"="cemetery"](around:${SEARCH_RADIUS},${originLat},${originLon});
       `;
 
     const q = `[out:json][timeout:10];(${filter});out center;`;
-    const r = await fetch("https://overpass.kumi.systems/api/interpreter", { method:"POST", body:q });
-    const d = await r.json();
+    const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
+      method: "POST",
+      body: q
+    });
+    const data = await res.json();
 
-    places = d.elements.map(e => ({
-      name: e.tags?.name || "Unnamed",
-      lat: +(e.lat || e.center.lat),
-      lon: +(e.lon || e.center.lon)
-    }));
+    places = data.elements
+      .map(el => ({
+        name: el.tags?.name || "Unnamed",
+        lat: Number(el.lat ?? el.center?.lat),
+        lon: Number(el.lon ?? el.center?.lon)
+      }))
+      .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
   }
 
   places = places
-    .map(p => ({ ...p, distance: getDistance(lat, lon, p.lat, p.lon) }))
+    .map(p => ({
+      ...p,
+      distance: getDistance(originLat, originLon, p.lat, p.lon)
+    }))
     .sort((a,b)=>a.distance-b.distance)
     .slice(0,3);
 
-  /* 🔥 PARALLEL BUS STOP LOOKUPS */
   await Promise.all(
     places.map(async p => {
       p.bus = await findClosestBusStop(p.lat, p.lon);
     })
   );
 
-  displayResults(places, lat, lon);
+  displayResults(places, originLat, originLon);
 }
 
 /* ================= BUS STOPS ================= */
 
 async function findClosestBusStop(lat, lon) {
-  const q = `
+  const query = `
     [out:json][timeout:8];
     node["highway"="bus_stop"](around:${SEARCH_RADIUS},${lat},${lon});
     out tags;
   `;
 
-  const r = await fetch("https://overpass.kumi.systems/api/interpreter", { method:"POST", body:q });
-  const d = await r.json();
-  if (!d.elements?.length) return "🚌 No bus stop nearby";
+  const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
+    method: "POST",
+    body: query
+  });
+  const data = await res.json();
 
-  const stops = d.elements.map(s => ({
-    name: s.tags?.name || "Unnamed bus stop",
-    routes: s.tags?.route_ref || s.tags?.routes || null,
-    dist: getDistance(lat, lon, s.lat, s.lon)
-  })).sort((a,b)=>a.dist-b.dist);
+  const stops = (data.elements || [])
+    .map(s => ({
+      name: s.tags?.name || "Unnamed bus stop",
+      routes: s.tags?.route_ref || s.tags?.routes || null,
+      lat: Number(s.lat),
+      lon: Number(s.lon)
+    }))
+    .filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lon))
+    .map(s => ({
+      ...s,
+      distance: getDistance(lat, lon, s.lat, s.lon)
+    }))
+    .sort((a,b)=>a.distance-b.distance);
+
+  if (!stops.length) return "🚌 No bus stop nearby";
 
   const s = stops[0];
-  const mins = Math.round((s.dist / WALK_SPEED) * 60);
+  const minutes = Math.round((s.distance / WALK_SPEED_KMH) * 60);
 
   let cls = "label-far";
-  if (mins <= 3) cls = "label-very";
-  else if (mins <= 8) cls = "label-close";
+  if (minutes <= 3) cls = "label-very";
+  else if (minutes <= 8) cls = "label-close";
 
   return `
     <span class="${cls}">
       🚌 ${s.name}<br>
       ${s.routes ? `Routes: ${s.routes}` : "Routes: Not available"}<br>
-      ${s.dist.toFixed(2)} km · ${mins} min walk
+      ${s.distance.toFixed(2)} km · ${minutes} min walk
     </span>
   `;
 }
@@ -245,7 +266,7 @@ function displayResults(results, lat, lon) {
   const bounds = [[lat, lon]];
 
   results.forEach((p,i)=>{
-    markers.push(L.marker([p.lat,p.lon]).addTo(map));
+    placeMarkers.push(L.marker([p.lat,p.lon]).addTo(map));
     bounds.push([p.lat,p.lon]);
 
     html += `
@@ -263,14 +284,15 @@ function displayResults(results, lat, lon) {
 
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
-  const dLat = (lat2-lat1)*Math.PI/180;
-  const dLon = (lon2-lon1)*Math.PI/180;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
   const a =
-    Math.sin(dLat/2)**2 +
-    Math.cos(lat1*Math.PI/180) *
-    Math.cos(lat2*Math.PI/180) *
-    Math.sin(dLon/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) *
+    Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 </script>
 </body>
