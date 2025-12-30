@@ -144,9 +144,11 @@ function setOrigin(lat, lon, label) {
 async function searchByAddress() {
   const address = document.getElementById("address").value.trim();
   if (!address) return alert("Please enter an address or postcode.");
+
   const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`);
   const data = await res.json();
   if (!data.length) return alert("Address not found.");
+
   setOrigin(+data[0].lat, +data[0].lon, "Search location");
 }
 
@@ -167,12 +169,15 @@ async function findNearestPlaces(lat, lon) {
   let results = [];
 
   if (type === "retail") {
-    results = retailParks.map(p => ({ ...p, distance: getDistance(lat, lon, p.lat, p.lon) }))
-      .sort((a,b)=>a.distance-b.distance).slice(0,3);
+    results = retailParks
+      .map(p => ({ ...p, distance: getDistance(lat, lon, p.lat, p.lon) }))
+      .sort((a,b)=>a.distance-b.distance)
+      .slice(0,3);
   }
 
   if (type === "waitrose") {
-    results = waitroseStores.map(w => ({ ...w, distance: getDistance(lat, lon, w.lat, w.lon) }))
+    results = waitroseStores
+      .map(w => ({ ...w, distance: getDistance(lat, lon, w.lat, w.lon) }))
       .sort((a,b)=>a.distance-b.distance);
   }
 
@@ -180,6 +185,7 @@ async function findNearestPlaces(lat, lon) {
     let filter = "";
     if (type === "station")
       filter = `node["railway"="station"](around:6000,${lat},${lon});`;
+
     if (type === "cemetery")
       filter = `
         way["landuse"="cemetery"](around:6000,${lat},${lon});
@@ -209,22 +215,19 @@ async function findNearestPlaces(lat, lon) {
       .slice(0,3);
   }
 
-  const transportData = await findTransportAround(lat, lon);
-  results.forEach(p => p.transport = nearestTransport(p, transportData));
+  const busStops = await findBusStops(lat, lon);
+  results.forEach(p => p.transport = nearestBusStop(p, busStops));
 
   cache[cacheKey] = results;
   displayResults(results, lat, lon);
 }
 
-/* ---------------- TRANSPORT (FIXED) ---------------- */
+/* ---------------- BUS STOPS ONLY ---------------- */
 
-async function findTransportAround(lat, lon) {
+async function findBusStops(lat, lon) {
   const query = `
     [out:json][timeout:10];
-    (
-      node["highway"="bus_stop"](around:2000,${lat},${lon});
-      node["railway"="station"](around:3000,${lat},${lon});
-    );
+    node["highway"="bus_stop"](around:2000,${lat},${lon});
     out body;
   `;
 
@@ -236,11 +239,11 @@ async function findTransportAround(lat, lon) {
   return data.elements || [];
 }
 
-function nearestTransport(place, transportData) {
-  const valid = transportData
-    .filter(el => el.lat && el.lon && (el.tags.highway === "bus_stop" || el.tags.railway === "station"))
-    .map(el => {
-      const dist = getDistance(place.lat, place.lon, el.lat, el.lon);
+function nearestBusStop(place, busStops) {
+  const valid = busStops
+    .filter(b => b.lat && b.lon)
+    .map(b => {
+      const dist = getDistance(place.lat, place.lon, b.lat, b.lon);
       const walk = Math.round((dist / 5) * 60);
 
       let label = "Far", css = "far";
@@ -248,14 +251,14 @@ function nearestTransport(place, transportData) {
       else if (walk <= 8) { label = "Close"; css = "close"; }
 
       return {
-        text: `${el.tags.highway === "bus_stop" ? "🚌 Bus stop" : "🚆 Train station"}: ${el.tags.name || "Unnamed"} (${dist.toFixed(2)} km · ${walk} min walk · ${label})`,
+        text: `🚌 Bus stop: ${b.tags.name || "Unnamed"} (${dist.toFixed(2)} km · ${walk} min walk · ${label})`,
         css,
         distance: dist
       };
     })
     .sort((a,b)=>a.distance-b.distance);
 
-  if (!valid.length) return "No public transport nearby";
+  if (!valid.length) return "No bus stop nearby";
   return `<span class="${valid[0].css}">${valid[0].text}</span>`;
 }
 
@@ -269,6 +272,7 @@ function displayResults(results, lat, lon) {
   results.forEach((p,i) => {
     resultMarkers.push(L.marker([p.lat, p.lon]).addTo(map).bindPopup(p.name));
     bounds.push([p.lat, p.lon]);
+
     html += `${["🥇","🥈","🥉"][i]} ${p.name}<br>
       <span class="distance">${p.distance.toFixed(2)} km away</span><br>
       <div class="transport">${p.transport}</div><br>`;
