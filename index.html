@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Nearby Places Map</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f4f6f8;
+    }
+
+    .container {
+      max-width: 1000px;
+      margin: auto;
+      padding: 20px;
+    }
+
+    h1 {
+      text-align: center;
+    }
+
+    .controls {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 15px;
+    }
+
+    select, button {
+      padding: 12px;
+      font-size: 16px;
+      flex: 1;
+    }
+
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    #map {
+      width: 100%;
+      height: 450px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+    }
+
+    ul {
+      list-style: none;
+      padding: 0;
+    }
+
+    li {
+      padding: 10px;
+      border-bottom: 1px solid #ddd;
+    }
+
+    .distance {
+      font-size: 14px;
+      color: #555;
+    }
+
+    .status {
+      text-align: center;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <h1>Nearby Places Finder</h1>
+
+    <div class="controls">
+      <select id="placeType">
+        <option value="train_station">🚆 Railway Stations</option>
+        <option value="shopping_mall">🛍️ Retail Parks</option>
+        <option value="hospital">🏥 Hospitals</option>
+      </select>
+      <button onclick="findPlaces()">Find Nearby</button>
+    </div>
+
+    <div class="status" id="status"></div>
+
+    <div id="map"></div>
+
+    <ul id="results"></ul>
+  </div>
+
+  <script>
+    let map;
+    let markers = [];
+    let userMarker;
+
+    function initMap(lat = 51.5074, lng = -0.1278) {
+      map = new google.maps.Map(document.getElementById("map"), {
+        center: { lat, lng },
+        zoom: 14
+      });
+    }
+
+    function findPlaces() {
+      const status = document.getElementById("status");
+      const results = document.getElementById("results");
+      results.innerHTML = "";
+      clearMarkers();
+
+      if (!navigator.geolocation) {
+        status.textContent = "Geolocation not supported.";
+        return;
+      }
+
+      status.textContent = "Getting your location...";
+
+      navigator.geolocation.getCurrentPosition(pos => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+
+        map.setCenter({ lat, lng });
+
+        userMarker = new google.maps.Marker({
+          position: { lat, lng },
+          map,
+          title: "You are here",
+          icon: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png"
+        });
+
+        const service = new google.maps.places.PlacesService(map);
+        const type = document.getElementById("placeType").value;
+
+        status.textContent = "Searching nearby places...";
+
+        service.nearbySearch(
+          {
+            location: { lat, lng },
+            radius: 5000,
+            type: type
+          },
+          (places, statusResult) => {
+            status.textContent = "";
+
+            if (statusResult !== google.maps.places.PlacesServiceStatus.OK || !places) {
+              status.textContent = "No results found.";
+              return;
+            }
+
+            places
+              .slice(0, 10)
+              .forEach(place => {
+                const marker = new google.maps.Marker({
+                  position: place.geometry.location,
+                  map,
+                  title: place.name
+                });
+
+                markers.push(marker);
+
+                const distance = calculateDistance(
+                  lat,
+                  lng,
+                  place.geometry.location.lat(),
+                  place.geometry.location.lng()
+                );
+
+                const li = document.createElement("li");
+                li.innerHTML = `
+                  <strong>${place.name}</strong><br>
+                  <span class="distance">${distance.toFixed(2)} km away</span>
+                `;
+                results.appendChild(li);
+              });
+          }
+        );
+      }, () => {
+        status.textContent = "Location permission denied.";
+      });
+    }
+
+    function clearMarkers() {
+      markers.forEach(m => m.setMap(null));
+      markers = [];
+      if (userMarker) userMarker.setMap(null);
+    }
+
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = toRad(lat2 - lat1);
+      const dLon = toRad(lon2 - lon1);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(toRad(lat1)) *
+        Math.cos(toRad(lat2)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    function toRad(value) {
+      return value * Math.PI / 180;
+    }
+  </script>
+
+  <!-- GOOGLE MAPS -->
+  <script
+    src="https://maps.googleapis.com/maps/api/js?key=YOUR_GOOGLE_MAPS_API_KEY&libraries=places&callback=initMap"
+    async
+    defer>
+  </script>
+
+</body>
+</html>
