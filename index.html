@@ -104,14 +104,18 @@ button.secondary {
 <script>
 let map, originMarker;
 let resultMarkers = [];
-const cache = {};
 
-/* 🔒 FIXED RETAIL PARK DATA */
+/* 🔒 FIXED DATASETS */
 const retailParks = [
-  { name: "Hermiston Gait Retail Park", lat: 55.92637234925634, lon: -3.307086208687484 }, 
+  { name: "Hermiston Gait Retail Park", lat: 55.9156, lon: -3.3199 },
   { name: "Meadowbank Retail Park", lat: 55.9595, lon: -3.1616 },
   { name: "Craigleith Retail Park", lat: 55.9636, lon: -3.2527 },
   { name: "Fort Kinnaird", lat: 55.9314, lon: -3.1027 }
+];
+
+const waitroseStores = [
+  { name: "Waitrose Comely Bank", lat: 55.95915605840695, lon: -3.22391060202278 },
+  { name: "Waitrose Morningside", lat: 55.929797381971866, lon: -3.208918594119695 }
 ];
 
 function initMap(lat, lon) {
@@ -161,10 +165,7 @@ async function findNearestPlaces(lat, lon) {
   /* ✅ RETAIL PARK OVERRIDE */
   if (type === "retail") {
     const results = retailParks
-      .map(p => ({
-        ...p,
-        distance: getDistance(lat, lon, p.lat, p.lon)
-      }))
+      .map(p => ({ ...p, distance: getDistance(lat, lon, p.lat, p.lon) }))
       .sort((a,b)=>a.distance-b.distance)
       .slice(0,3);
 
@@ -175,15 +176,25 @@ async function findNearestPlaces(lat, lon) {
     return displayResults(results, lat, lon);
   }
 
-  /* 🔁 EVERYTHING ELSE UNCHANGED */
+  /* ✅ WAITROSE OVERRIDE */
+  if (type === "waitrose") {
+    const results = waitroseStores
+      .map(w => ({ ...w, distance: getDistance(lat, lon, w.lat, w.lon) }))
+      .sort((a,b)=>a.distance-b.distance);
+
+    for (const store of results) {
+      store.transport = await findNearestTransport(store.lat, store.lon);
+    }
+
+    return displayResults(results, lat, lon);
+  }
+
+  /* 🔁 UNCHANGED LOGIC */
   let filter = "";
   let radius = 4000;
 
   if (type === "station")
     filter = `node["railway"="station"](around:${radius},${lat},${lon});`;
-
-  if (type === "waitrose")
-    filter = `node["shop"="supermarket"]["name"~"Waitrose",i](around:${radius},${lat},${lon});`;
 
   if (type === "cemetery")
     filter = `
@@ -257,7 +268,7 @@ function displayResults(results, lat, lon) {
     bounds.push([p.lat, p.lon]);
 
     html += `
-      ${["🥇","🥈","🥉"][i]} ${p.name}<br>
+      ${["🥇","🥈","🥉"][i] || "📍"} ${p.name}<br>
       <span class="distance">${p.distance.toFixed(2)} km away</span><br>
       <div class="transport">${p.transport}</div><br>
     `;
