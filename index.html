@@ -159,7 +159,7 @@ async function findNearestPlaces(lat, lon) {
   if (cache[key]) return displayResults(cache[key], lat, lon);
 
   let filter = "";
-  let radius = 4000;
+  let radius = 6000;
 
   if (type === "station")
     filter = `node["railway"="station"](around:${radius},${lat},${lon});`;
