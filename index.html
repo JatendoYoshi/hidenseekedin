@@ -91,139 +91,137 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <script>
-    let map;
-    let userMarker;
-    let placeMarker;
+  let map;
+  let userMarker;
+  let placeMarker;
 
-    function initMap(lat, lon) {
-      map = L.map("map").setView([lat, lon], 14);
+  function initMap(lat, lon) {
+    map = L.map("map").setView([lat, lon], 14);
 
-      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        attribution: "&copy; OpenStreetMap contributors"
-      }).addTo(map);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors"
+    }).addTo(map);
 
-      userMarker = L.marker([lat, lon], {
-        icon: L.icon({
-          iconUrl: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
-          iconSize: [32, 32],
-          iconAnchor: [16, 32]
-        })
-      }).addTo(map).bindPopup("You are here").openPopup();
-    }
+    userMarker = L.marker([lat, lon], {
+      icon: L.icon({
+        iconUrl: "https://maps.google.com/mapfiles/ms/icons/blue-dot.png",
+        iconSize: [32, 32],
+        iconAnchor: [16, 32]
+      })
+    }).addTo(map).bindPopup("You are here").openPopup();
+  }
 
-    function findNearest() {
-      const output = document.getElementById("output");
+  function findNearest() {
+    const output = document.getElementById("output");
 
-      navigator.geolocation.getCurrentPosition(pos => {
-        const lat = pos.coords.latitude;
-        const lon = pos.coords.longitude;
+    navigator.geolocation.getCurrentPosition(pos => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
 
-        if (!map) initMap(lat, lon);
-        map.setView([lat, lon], 14);
+      if (!map) initMap(lat, lon);
+      map.setView([lat, lon], 14);
 
-        if (placeMarker) map.removeLayer(placeMarker);
+      if (placeMarker) map.removeLayer(placeMarker);
 
-        const type = document.getElementById("placeType").value;
-        let filter = "";
+      const type = document.getElementById("placeType").value;
+      let filter = "";
 
-        if (type === "station") {
-          filter = `
-            node["railway"="station"]
-            way["railway"="station"]
-            relation["railway"="station"]
-          `;
-        }
-
-        if (type === "retail") {
-          filter = `
-            node["shop"="mall"]
-            way["shop"="mall"]
-            way["landuse"="retail"]
-            relation["landuse"="retail"]
-          `;
-        }
-
-        if (type === "cemetery") {
-          filter = `
-            node["amenity"="grave_yard"]
-            way["amenity"="grave_yard"]
-            way["landuse"="cemetery"]
-            relation["landuse"="cemetery"]
-          `;
-        }
-
-        if (type === "waitrose") {
-          filter = `
-            node["shop"="supermarket"]["name"~"Waitrose",i]
-            way["shop"="supermarket"]["name"~"Waitrose",i]
-          `;
-        }
-
-        const query = `
-          [out:json];
-          (
-            ${filter}
-          )(around:7000,${lat},${lon});
-          out center;
+      if (type === "station") {
+        filter = `
+          node["railway"="station"](around:7000,${lat},${lon});
+          way["railway"="station"](around:7000,${lat},${lon});
+          relation["railway"="station"](around:7000,${lat},${lon});
         `;
+      }
 
-        fetch("https://overpass-api.de/api/interpreter", {
-          method: "POST",
-          body: query
-        })
-        .then(res => res.json())
-        .then(data => {
-          if (!data.elements.length) {
-            output.innerHTML = "No nearby locations found.";
-            return;
-          }
+      if (type === "retail") {
+        filter = `
+          node["shop"="mall"](around:7000,${lat},${lon});
+          way["shop"="mall"](around:7000,${lat},${lon});
+          way["landuse"="retail"](around:7000,${lat},${lon});
+          relation["landuse"="retail"](around:7000,${lat},${lon});
+        `;
+      }
 
-          const nearest = data.elements
-            .map(el => {
-              const lat2 = el.lat || el.center.lat;
-              const lon2 = el.lon || el.center.lon;
-              return {
-                name: el.tags?.name || "Unnamed location",
-                lat: lat2,
-                lon: lon2,
-                distance: getDistance(lat, lon, lat2, lon2)
-              };
-            })
-            .sort((a, b) => a.distance - b.distance)[0];
+      if (type === "cemetery") {
+        filter = `
+          node["amenity"="grave_yard"](around:7000,${lat},${lon});
+          way["amenity"="grave_yard"](around:7000,${lat},${lon});
+          way["landuse"="cemetery"](around:7000,${lat},${lon});
+          relation["landuse"="cemetery"](around:7000,${lat},${lon});
+        `;
+      }
 
-          placeMarker = L.marker([nearest.lat, nearest.lon]).addTo(map)
-            .bindPopup(nearest.name)
-            .openPopup();
+      if (type === "waitrose") {
+        filter = `
+          node["shop"="supermarket"]["name"~"Waitrose",i](around:7000,${lat},${lon});
+          way["shop"="supermarket"]["name"~"Waitrose",i](around:7000,${lat},${lon});
+        `;
+      }
 
-          map.fitBounds([
-            [lat, lon],
-            [nearest.lat, nearest.lon]
-          ]);
+      const query = `
+        [out:json];
+        (
+          ${filter}
+        );
+        out center;
+      `;
 
-          output.innerHTML = `
-            <strong>Nearest location:</strong><br>
-            ${nearest.name}<br>
-            <span class="distance">${nearest.distance.toFixed(2)} km away</span>
-          `;
-        });
+      fetch("https://overpass-api.de/api/interpreter", {
+        method: "POST",
+        body: query
+      })
+      .then(res => res.json())
+      .then(data => {
+        if (!data.elements.length) {
+          output.innerHTML = "No nearby locations found.";
+          return;
+        }
+
+        const nearest = data.elements
+          .map(el => {
+            const lat2 = el.lat || el.center.lat;
+            const lon2 = el.lon || el.center.lon;
+            return {
+              name: el.tags?.name || "Unnamed location",
+              lat: lat2,
+              lon: lon2,
+              distance: getDistance(lat, lon, lat2, lon2)
+            };
+          })
+          .sort((a, b) => a.distance - b.distance)[0];
+
+        placeMarker = L.marker([nearest.lat, nearest.lon]).addTo(map)
+          .bindPopup(nearest.name)
+          .openPopup();
+
+        map.fitBounds([
+          [lat, lon],
+          [nearest.lat, nearest.lon]
+        ]);
+
+        output.innerHTML = `
+          <strong>Nearest location:</strong><br>
+          ${nearest.name}<br>
+          <span class="distance">${nearest.distance.toFixed(2)} km away</span>
+        `;
       });
-    }
+    });
+  }
 
-    function getDistance(lat1, lon1, lat2, lon2) {
-      const R = 6371;
-      const dLat = toRad(lat2 - lat1);
-      const dLon = toRad(lon2 - lon1);
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(lat1)) *
-        Math.cos(toRad(lat2)) *
-        Math.sin(dLon / 2) ** 2;
-      return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    }
+  function getDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLon / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
 
-    function toRad(val) {
-      return val * Math.PI / 180;
-    }
-  </script>
-</body>
-</html>
+  function toRad(val) {
+    return val * Math.PI / 180;
+  }
+</script>
