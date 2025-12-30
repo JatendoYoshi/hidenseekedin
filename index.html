@@ -5,12 +5,17 @@
 <title>Nearest Places Finder</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
+<!-- Leaflet (map rendering) -->
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 
 <style>
+/* ===========================
+   BASIC PAGE STYLING
+   =========================== */
+
 body {
   margin: 0;
-  font-family: Arial, sans-serif;
+  font-family: Arial, Helvetica, sans-serif;
   background: #f4f6f8;
 }
 
@@ -24,14 +29,20 @@ h1 {
   text-align: center;
 }
 
+/* ===========================
+   CONTROLS
+   =========================== */
+
 .controls {
   display: grid;
   grid-template-columns: 2fr 1fr 1fr 1fr;
   gap: 10px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
 }
 
-input, select, button {
+input,
+select,
+button {
   padding: 12px;
   font-size: 16px;
 }
@@ -48,31 +59,50 @@ button.secondary {
   background: #6c757d;
 }
 
+/* ===========================
+   MAP
+   =========================== */
+
 #map {
   height: 450px;
   border-radius: 8px;
   margin-bottom: 15px;
 }
 
+/* ===========================
+   OUTPUT
+   =========================== */
+
 .result {
   background: white;
   padding: 15px;
   border-radius: 6px;
   box-shadow: 0 0 6px rgba(0,0,0,0.1);
+  line-height: 1.5;
 }
 
-.distance {
-  font-size: 14px;
+/* ===========================
+   DISTANCE LABELS
+   =========================== */
+
+.label-very {
+  color: green;
+  font-weight: bold;
 }
 
-.transport {
-  font-size: 14px;
-  margin-top: 4px;
+.label-close {
+  color: orange;
+  font-weight: bold;
 }
 
-.label-very { color: green; font-weight: bold; }
-.label-close { color: orange; font-weight: bold; }
-.label-far { color: red; font-weight: bold; }
+.label-far {
+  color: red;
+  font-weight: bold;
+}
+
+/* ===========================
+   MOBILE
+   =========================== */
 
 @media (max-width: 768px) {
   .controls {
@@ -84,6 +114,7 @@ button.secondary {
 
 <body>
 <div class="container">
+
 <h1>Find the Nearest Places</h1>
 
 <div class="controls">
@@ -99,17 +130,26 @@ button.secondary {
 </div>
 
 <div id="map"></div>
-<div id="output" class="result">Start a search.</div>
+<div id="output" class="result">Start a search to see results.</div>
+
 </div>
 
+<!-- Leaflet JS -->
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-let map, originMarker;
-let resultMarkers = [];
-let cachedBusStops = [];
+/* =====================================================
+   GLOBAL VARIABLES
+   ===================================================== */
 
-/* FIXED DATASETS */
+let map;
+let originMarker;
+let resultMarkers = [];
+
+/* =====================================================
+   FIXED DATASETS (RETAIL PARKS & WAITROSE)
+   ===================================================== */
+
 const retailParks = [
   { name: "Hermiston Gait Retail Park", lat: 55.92593, lon: -3.30701 },
   { name: "Meadowbank Retail Park", lat: 55.95772, lon: -3.16502 },
@@ -122,155 +162,196 @@ const waitroseStores = [
   { name: "Waitrose Morningside", lat: 55.92980, lon: -3.20892 }
 ];
 
+/* =====================================================
+   MAP INITIALISATION
+   ===================================================== */
+
 function initMap(lat, lon) {
   map = L.map("map").setView([lat, lon], 14);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 }
+
+/* =====================================================
+   MARKER MANAGEMENT
+   ===================================================== */
 
 function clearMarkers() {
   resultMarkers.forEach(m => map.removeLayer(m));
   resultMarkers = [];
 }
 
+/* =====================================================
+   ORIGIN SETTING
+   ===================================================== */
+
 function setOrigin(lat, lon, label) {
   if (!map) initMap(lat, lon);
   map.setView([lat, lon], 14);
 
-  cachedBusStops = []; // reset cache per search
-
-  if (originMarker) map.removeLayer(originMarker);
   clearMarkers();
 
+  if (originMarker) map.removeLayer(originMarker);
   originMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
+
   findNearestPlaces(lat, lon);
 }
 
+/* =====================================================
+   ADDRESS SEARCH
+   ===================================================== */
+
 async function searchByAddress() {
-  const addr = document.getElementById("address").value.trim();
-  if (!addr) return alert("Enter an address");
+  const address = document.getElementById("address").value.trim();
+  if (!address) {
+    alert("Please enter an address or postcode.");
+    return;
+  }
 
-  const res = await fetch(
-    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}`
+  const response = await fetch(
+    `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`
   );
-  const data = await res.json();
-  if (!data.length) return alert("Not found");
+  const data = await response.json();
 
-  setOrigin(Number(data[0].lat), Number(data[0].lon), "Search location");
+  if (!data.length) {
+    alert("Address not found.");
+    return;
+  }
+
+  setOrigin(+data[0].lat, +data[0].lon, "Search location");
 }
+
+/* =====================================================
+   GEOLOCATION SEARCH
+   ===================================================== */
 
 function searchByLocation() {
   navigator.geolocation.getCurrentPosition(
     pos => setOrigin(pos.coords.latitude, pos.coords.longitude, "You are here"),
-    () => alert("Location denied")
+    () => alert("Location access denied.")
   );
 }
 
-async function fetchBusStops(lat, lon) {
-  const query = `
-    [out:json][timeout:10];
-    node["highway"="bus_stop"](around:6000,${lat},${lon});
-    out body;
-  `;
-
-  const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
-    method: "POST",
-    body: query
-  });
-
-  const data = await res.json();
-  cachedBusStops = (data.elements || []).filter(
-    s => Number.isFinite(s.lat) && Number.isFinite(s.lon)
-  );
-}
+/* =====================================================
+   MAIN SEARCH LOGIC
+   ===================================================== */
 
 async function findNearestPlaces(lat, lon) {
   const type = document.getElementById("placeType").value;
   let places = [];
 
-  await fetchBusStops(lat, lon); // ONE transport query
-
+  /* ---------- FIXED DATA ---------- */
   if (type === "retail") places = retailParks;
   else if (type === "waitrose") places = waitroseStores;
+
+  /* ---------- LIVE OSM DATA ---------- */
   else {
     let filter = "";
+
     if (type === "station")
       filter = `node["railway"="station"](around:6000,${lat},${lon});`;
+
     if (type === "cemetery")
       filter = `
         way["landuse"="cemetery"](around:6000,${lat},${lon});
         relation["landuse"="cemetery"](around:6000,${lat},${lon});
       `;
 
-    const q = `[out:json];(${filter});out center;`;
-    const r = await fetch("https://overpass.kumi.systems/api/interpreter", {
-      method: "POST", body: q
+    const query = `[out:json][timeout:10];(${filter});out center;`;
+    const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
+      method: "POST",
+      body: query
     });
-    const d = await r.json();
+    const data = await res.json();
 
-    places = d.elements.map(e => ({
-      name: e.tags?.name || "Unnamed",
-      lat: Number(e.lat || e.center.lat),
-      lon: Number(e.lon || e.center.lon)
+    places = data.elements.map(el => ({
+      name: el.tags?.name || "Unnamed location",
+      lat: +(el.lat || el.center.lat),
+      lon: +(el.lon || el.center.lon)
     }));
   }
 
+  /* ---------- DISTANCE SORT ---------- */
   places = places
     .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon))
-    .map(p => ({ ...p, distance: getDistance(lat, lon, p.lat, p.lon) }))
-    .sort((a,b)=>a.distance-b.distance)
-    .slice(0,3);
+    .map(p => ({
+      ...p,
+      distance: getDistance(lat, lon, p.lat, p.lon)
+    }))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, 3);
 
-  for (const p of places) {
-    p.transport = findClosestBusStopFromCache(p.lat, p.lon);
-  }
+  /* ---------- BUS STOPS (PARALLEL) ---------- */
+  await Promise.all(
+    places.map(async place => {
+      place.bus = await findClosestBusStop(place.lat, place.lon);
+    })
+  );
 
   displayResults(places, lat, lon);
 }
 
-function findClosestBusStopFromCache(lat, lon) {
-  if (!cachedBusStops.length) return "🚌 No bus stop nearby";
+/* =====================================================
+   CLOSEST BUS STOP TO A PLACE
+   ===================================================== */
 
-  const closest = cachedBusStops
+async function findClosestBusStop(lat, lon) {
+  const query = `
+    [out:json][timeout:8];
+    node["highway"="bus_stop"](around:6000,${lat},${lon});
+    out tags;
+  `;
+
+  const res = await fetch("https://overpass.kumi.systems/api/interpreter", {
+    method: "POST",
+    body: query
+  });
+  const data = await res.json();
+
+  if (!data.elements || !data.elements.length) {
+    return "🚌 No bus stop nearby";
+  }
+
+  const stops = data.elements
+    .filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lon))
     .map(s => ({
       name: s.tags?.name || "Unnamed bus stop",
-      lat: s.lat,
-      lon: s.lon,
       routes: s.tags?.route_ref || s.tags?.routes || null,
       distance: getDistance(lat, lon, s.lat, s.lon)
     }))
-    .sort((a,b)=>a.distance-b.distance)[0];
+    .sort((a, b) => a.distance - b.distance);
 
-  const minutes = Math.round((closest.distance / 5) * 60);
+  const stop = stops[0];
+  const minutes = Math.round((stop.distance / 5) * 60);
 
-  let label = "label-far";
-  if (minutes <= 3) label = "label-very";
-  else if (minutes <= 8) label = "label-close";
-
-  const routesText = closest.routes
-    ? `Routes: ${closest.routes}`
-    : "Routes: Not available";
+  let labelClass = "label-far";
+  if (minutes <= 3) labelClass = "label-very";
+  else if (minutes <= 8) labelClass = "label-close";
 
   return `
-    <span class="${label}">
-      🚌 ${closest.name}<br>
-      ${routesText}<br>
-      ${closest.distance.toFixed(2)} km · ${minutes} min walk
+    <span class="${labelClass}">
+      🚌 ${stop.name}<br>
+      ${stop.routes ? `Routes: ${stop.routes}` : "Routes: Not available"}<br>
+      ${stop.distance.toFixed(2)} km · ${minutes} min walk
     </span>
   `;
 }
+
+/* =====================================================
+   DISPLAY RESULTS
+   ===================================================== */
 
 function displayResults(results, lat, lon) {
   let html = "<strong>Closest results:</strong><br><br>";
   const bounds = [[lat, lon]];
 
-  results.forEach((p,i) => {
+  results.forEach((p, i) => {
     resultMarkers.push(L.marker([p.lat, p.lon]).addTo(map));
     bounds.push([p.lat, p.lon]);
 
     html += `
-      ${["🥇","🥈","🥉"][i]} ${p.name}<br>
-      <span class="distance">${p.distance.toFixed(2)} km away</span><br>
-      <div class="transport">${p.transport}</div><br>
+      ${["🥇", "🥈", "🥉"][i]} ${p.name}<br>
+      ${p.distance.toFixed(2)} km away<br>
+      ${p.bus}<br><br>
     `;
   });
 
@@ -278,16 +359,21 @@ function displayResults(results, lat, lon) {
   document.getElementById("output").innerHTML = html;
 }
 
+/* =====================================================
+   HAVERSINE DISTANCE FUNCTION
+   ===================================================== */
+
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
-  const dLat = (lat2-lat1) * Math.PI/180;
-  const dLon = (lon2-lon1) * Math.PI/180;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
   const a =
-    Math.sin(dLat/2)**2 +
-    Math.cos(lat1*Math.PI/180) *
-    Math.cos(lat2*Math.PI/180) *
-    Math.sin(dLon/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) *
+    Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) ** 2;
+
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 </script>
 </body>
