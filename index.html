@@ -96,7 +96,7 @@ button.secondary { background: #6c757d; }
 
 <script>
 const SEARCH_RADIUS = 6000;
-const WALK_SPEED_KMH = 5;
+const WALK_SPEED_KMH = 2; // ✅ UPDATED
 
 let map, originMarker;
 let placeMarkers = [];
@@ -113,8 +113,6 @@ const waitroseStores = [
   { name:"Waitrose Morningside", lat:55.92980, lon:-3.20892 }
 ];
 
-/* ================= MAP ================= */
-
 function initMap(lat, lon) {
   map = L.map("map").setView([lat, lon], 14);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
@@ -124,8 +122,6 @@ function clearMarkers() {
   placeMarkers.forEach(m => map.removeLayer(m));
   placeMarkers = [];
 }
-
-/* ================= SEARCH ================= */
 
 async function searchByAddress() {
   const q = document.getElementById("address").value.trim();
@@ -158,8 +154,6 @@ async function startSearch(lat, lon, label) {
   await showClosestBusToUser(lat, lon);
   await findNearestPlaces(lat, lon);
 }
-
-/* ================= BUS STOP CORE ================= */
 
 async function showClosestBusToUser(lat, lon) {
   const box = document.getElementById("busBox");
@@ -194,9 +188,16 @@ async function findClosestBusStop(lat, lon) {
       const lon2 = el.lon ?? el.center?.lon;
       if (!Number.isFinite(lat2) || !Number.isFinite(lon2)) return null;
 
+      const tags = el.tags || {};
+      const name =
+        tags.name ||
+        tags.local_ref ||
+        tags.ref ||
+        "Bus stop (unnamed)";
+
       return {
-        name: el.tags?.name || "Unnamed bus stop",
-        routes: el.tags?.route_ref || "Not available",
+        name,
+        routes: tags.route_ref || "Routes not listed",
         dist: getDistance(lat, lon, lat2, lon2)
       };
     })
@@ -209,8 +210,8 @@ async function findClosestBusStop(lat, lon) {
   const mins = Math.round((s.dist / WALK_SPEED_KMH) * 60);
 
   let cls = "label-far";
-  if (mins <= 3) cls = "label-very";
-  else if (mins <= 8) cls = "label-close";
+  if (mins <= 5) cls = "label-very";
+  else if (mins <= 12) cls = "label-close";
 
   return `
     <span class="${cls}">
@@ -220,8 +221,6 @@ async function findClosestBusStop(lat, lon) {
     </span>
   `;
 }
-
-/* ================= PLACES ================= */
 
 async function findNearestPlaces(originLat, originLon) {
   const type = document.getElementById("placeType").value;
@@ -260,7 +259,6 @@ async function findNearestPlaces(originLat, originLon) {
     .sort((a,b)=>a.dist-b.dist)
     .slice(0,3);
 
-  /* 🔴 THIS WAS THE MISSING PART */
   await Promise.all(
     places.map(async p => {
       p.bus = await findClosestBusStop(p.lat, p.lon);
@@ -269,8 +267,6 @@ async function findNearestPlaces(originLat, originLon) {
 
   displayResults(places, originLat, originLon);
 }
-
-/* ================= DISPLAY ================= */
 
 function displayResults(results, lat, lon) {
   let html = "<strong>Closest results:</strong><br><br>";
@@ -290,8 +286,6 @@ function displayResults(results, lat, lon) {
   map.fitBounds(bounds);
   document.getElementById("output").innerHTML = html;
 }
-
-/* ================= DISTANCE ================= */
 
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371;
