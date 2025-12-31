@@ -95,18 +95,11 @@ button.secondary { background: #6c757d; }
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
-/* ================= CONSTANTS ================= */
-
 const SEARCH_RADIUS = 6000;
 const WALK_SPEED_KMH = 5;
 
-/* ================= MAP STATE ================= */
-
-let map;
-let originMarker;
+let map, originMarker;
 let placeMarkers = [];
-
-/* ================= FIXED DATA ================= */
 
 const retailParks = [
   { name:"Hermiston Gait Retail Park", lat:55.92593, lon:-3.30701 },
@@ -136,7 +129,7 @@ function clearMarkers() {
 
 async function searchByAddress() {
   const q = document.getElementById("address").value.trim();
-  if (!q) return alert("Enter an address or postcode");
+  if (!q) return alert("Enter an address");
 
   const r = await fetch(
     `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`
@@ -166,7 +159,7 @@ async function startSearch(lat, lon, label) {
   await findNearestPlaces(lat, lon);
 }
 
-/* ================= USER BUS STOP ================= */
+/* ================= BUS STOP CORE ================= */
 
 async function showClosestBusToUser(lat, lon) {
   const box = document.getElementById("busBox");
@@ -176,8 +169,6 @@ async function showClosestBusToUser(lat, lon) {
   const bus = await findClosestBusStop(lat, lon);
   box.innerHTML = `<strong>Closest bus stop to you:</strong><br>${bus}`;
 }
-
-/* ================= BUS STOP (UK-CORRECT) ================= */
 
 async function findClosestBusStop(lat, lon) {
   const query = `
@@ -205,7 +196,7 @@ async function findClosestBusStop(lat, lon) {
 
       return {
         name: el.tags?.name || "Unnamed bus stop",
-        routes: el.tags?.route_ref || el.tags?.routes || "Not available",
+        routes: el.tags?.route_ref || "Not available",
         dist: getDistance(lat, lon, lat2, lon2)
       };
     })
@@ -255,17 +246,26 @@ async function findNearestPlaces(originLat, originLon) {
     });
     const d = await r.json();
 
-    places = d.elements.map(e => ({
-      name: e.tags?.name || "Unnamed",
-      lat: Number(e.lat ?? e.center?.lat),
-      lon: Number(e.lon ?? e.center?.lon)
-    })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+    places = d.elements
+      .map(e => ({
+        name: e.tags?.name || "Unnamed",
+        lat: Number(e.lat ?? e.center?.lat),
+        lon: Number(e.lon ?? e.center?.lon)
+      }))
+      .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
   }
 
   places = places
     .map(p => ({ ...p, dist: getDistance(originLat, originLon, p.lat, p.lon) }))
     .sort((a,b)=>a.dist-b.dist)
     .slice(0,3);
+
+  /* 🔴 THIS WAS THE MISSING PART */
+  await Promise.all(
+    places.map(async p => {
+      p.bus = await findClosestBusStop(p.lat, p.lon);
+    })
+  );
 
   displayResults(places, originLat, originLon);
 }
@@ -282,7 +282,8 @@ function displayResults(results, lat, lon) {
 
     html += `
       ${["🥇","🥈","🥉"][i]} ${p.name}<br>
-      ${p.dist.toFixed(2)} km away<br><br>
+      ${p.dist.toFixed(2)} km away<br>
+      ${p.bus}<br><br>
     `;
   });
 
