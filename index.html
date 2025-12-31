@@ -95,12 +95,15 @@ button.secondary { background: #6c757d; }
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
+/* ================= CONSTANTS ================= */
 const SEARCH_RADIUS = 6000;
-const WALK_SPEED_KMH = 2; // ✅ UPDATED
+const WALK_SPEED_KMH = 2;
 
+/* ================= MAP STATE ================= */
 let map, originMarker;
 let placeMarkers = [];
 
+/* ================= FIXED DATA ================= */
 const retailParks = [
   { name:"Hermiston Gait Retail Park", lat:55.92593, lon:-3.30701 },
   { name:"Meadowbank Retail Park", lat:55.95772, lon:-3.16502 },
@@ -113,6 +116,7 @@ const waitroseStores = [
   { name:"Waitrose Morningside", lat:55.92980, lon:-3.20892 }
 ];
 
+/* ================= MAP ================= */
 function initMap(lat, lon) {
   map = L.map("map").setView([lat, lon], 14);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
@@ -123,9 +127,10 @@ function clearMarkers() {
   placeMarkers = [];
 }
 
+/* ================= SEARCH ================= */
 async function searchByAddress() {
   const q = document.getElementById("address").value.trim();
-  if (!q) return alert("Enter an address");
+  if (!q) return alert("Enter an address or postcode");
 
   const r = await fetch(
     `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`
@@ -155,15 +160,28 @@ async function startSearch(lat, lon, label) {
   await findNearestPlaces(lat, lon);
 }
 
-async function showClosestBusToUser(lat, lon) {
-  const box = document.getElementById("busBox");
-  box.style.display = "block";
-  box.innerHTML = "<strong>Closest bus stop to you:</strong><br>Searching…";
-
-  const bus = await findClosestBusStop(lat, lon);
-  box.innerHTML = `<strong>Closest bus stop to you:</strong><br>${bus}`;
+/* ================= BUS STOP HELPERS ================= */
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371;
+  const dLat = (lat2-lat1) * Math.PI/180;
+  const dLon = (lon2-lon1) * Math.PI/180;
+  const a =
+    Math.sin(dLat/2)**2 +
+    Math.cos(lat1*Math.PI/180) *
+    Math.cos(lat2*Math.PI/180) *
+    Math.sin(dLon/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+function getBusStopName(tags) {
+  if (tags.name) return tags.name;
+  if (tags.description) return tags.description;
+  if (tags["addr:street"])
+    return `Bus stop on ${tags["addr:street"]}`;
+  return "Nearby bus stop";
+}
+
+/* ================= BUS STOP SEARCH ================= */
 async function findClosestBusStop(lat, lon) {
   const query = `
     [out:json][timeout:10];
@@ -188,16 +206,9 @@ async function findClosestBusStop(lat, lon) {
       const lon2 = el.lon ?? el.center?.lon;
       if (!Number.isFinite(lat2) || !Number.isFinite(lon2)) return null;
 
-      const tags = el.tags || {};
-      const name =
-        tags.name ||
-        tags.local_ref ||
-        tags.ref ||
-        "Bus stop (unnamed)";
-
       return {
-        name,
-        routes: tags.route_ref || "Routes not listed",
+        name: getBusStopName(el.tags || {}),
+        routes: el.tags?.route_ref || "Routes not listed",
         dist: getDistance(lat, lon, lat2, lon2)
       };
     })
@@ -222,6 +233,17 @@ async function findClosestBusStop(lat, lon) {
   `;
 }
 
+/* ================= USER BUS STOP ================= */
+async function showClosestBusToUser(lat, lon) {
+  const box = document.getElementById("busBox");
+  box.style.display = "block";
+  box.innerHTML = "<strong>Closest bus stop to you:</strong><br>Searching…";
+
+  const bus = await findClosestBusStop(lat, lon);
+  box.innerHTML = `<strong>Closest bus stop to you:</strong><br>${bus}`;
+}
+
+/* ================= PLACES ================= */
 async function findNearestPlaces(originLat, originLon) {
   const type = document.getElementById("placeType").value;
   let places = [];
@@ -268,6 +290,7 @@ async function findNearestPlaces(originLat, originLon) {
   displayResults(places, originLat, originLon);
 }
 
+/* ================= DISPLAY ================= */
 function displayResults(results, lat, lon) {
   let html = "<strong>Closest results:</strong><br><br>";
   const bounds = [[lat, lon]];
@@ -285,18 +308,6 @@ function displayResults(results, lat, lon) {
 
   map.fitBounds(bounds);
   document.getElementById("output").innerHTML = html;
-}
-
-function getDistance(lat1, lon1, lat2, lon2) {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(lat1 * Math.PI / 180) *
-    Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 </script>
 </body>
