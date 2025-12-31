@@ -125,19 +125,10 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-/* ===== FIXED BUS STOP NAME LOGIC ===== */
-function getBusStopName(tags, parentPlaceName) {
-  if (tags.name) return tags.name;
-  if (tags.ref) return `Bus stop ${tags.ref}`;
-  if (tags.local_ref) return `Bus stop ${tags.local_ref}`;
-  if (tags.stop_id) return `Bus stop ${tags.stop_id}`;
-  if (parentPlaceName) return `Bus stop near ${parentPlaceName}`;
-  return "Unnamed bus stop";
-}
-
-async function findClosestBusStop(lat, lon, parentPlaceName) {
+/* ✅ FINAL BUS STOP LOGIC */
+async function findClosestBusStop(lat, lon, placeName) {
   const query = `
-    [out:json][timeout:10];
+    [out:json][timeout:8];
     (
       node["highway"="bus_stop"](around:${SEARCH_RADIUS},${lat},${lon});
       node["public_transport"="platform"](around:${SEARCH_RADIUS},${lat},${lon});
@@ -159,8 +150,7 @@ async function findClosestBusStop(lat, lon, parentPlaceName) {
       if (!Number.isFinite(lat2) || !Number.isFinite(lon2)) return null;
 
       return {
-        name: getBusStopName(el.tags || {}, parentPlaceName),
-        routes: el.tags?.route_ref || "Routes not listed",
+        name: el.tags?.name || `Bus stop near ${placeName}`,
         dist: getDistance(lat, lon, lat2, lon2)
       };
     })
@@ -179,13 +169,12 @@ async function findClosestBusStop(lat, lon, parentPlaceName) {
   return `
     <span class="${cls}">
       🚌 ${s.name}<br>
-      Routes: ${s.routes}<br>
       ${s.dist.toFixed(2)} km · ${mins} min walk
     </span>
   `;
 }
 
-/* ===== SEARCH & DISPLAY (UNCHANGED) ===== */
+/* SEARCH LOGIC (UNCHANGED) */
 
 async function searchByAddress() {
   const q = document.getElementById("address").value.trim();
@@ -223,7 +212,7 @@ async function findNearestPlaces(originLat, originLon) {
   if (type === "retail") places = retailParks;
   else if (type === "waitrose") places = waitroseStores;
   else {
-    let filter = type === "station"
+    const filter = type === "station"
       ? `node["railway"="station"](around:${SEARCH_RADIUS},${originLat},${originLon});`
       : `way["landuse"="cemetery"](around:${SEARCH_RADIUS},${originLat},${originLon});`;
 
