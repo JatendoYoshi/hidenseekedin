@@ -26,10 +26,12 @@ h1 { text-align: center; }
   gap: 10px;
   margin-bottom: 10px;
 }
+
 input, select, button {
   padding: 12px;
   font-size: 16px;
 }
+
 button {
   background: #007bff;
   color: white;
@@ -50,8 +52,8 @@ button.secondary { background: #6c757d; }
   padding: 15px;
   border-radius: 6px;
   box-shadow: 0 0 6px rgba(0,0,0,0.1);
-  line-height: 1.5;
   margin-bottom: 10px;
+  line-height: 1.5;
 }
 
 .bus-box {
@@ -93,11 +95,18 @@ button.secondary { background: #6c757d; }
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
 <script>
+/* ================= CONSTANTS ================= */
+
 const SEARCH_RADIUS = 6000;
 const WALK_SPEED_KMH = 5;
 
-let map, originMarker;
-let markers = [];
+/* ================= MAP STATE ================= */
+
+let map;
+let originMarker;
+let placeMarkers = [];
+
+/* ================= FIXED DATA ================= */
 
 const retailParks = [
   { name:"Hermiston Gait Retail Park", lat:55.92593, lon:-3.30701 },
@@ -111,15 +120,19 @@ const waitroseStores = [
   { name:"Waitrose Morningside", lat:55.92980, lon:-3.20892 }
 ];
 
+/* ================= MAP ================= */
+
 function initMap(lat, lon) {
   map = L.map("map").setView([lat, lon], 14);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png").addTo(map);
 }
 
 function clearMarkers() {
-  markers.forEach(m => map.removeLayer(m));
-  markers = [];
+  placeMarkers.forEach(m => map.removeLayer(m));
+  placeMarkers = [];
 }
+
+/* ================= SEARCH ================= */
 
 async function searchByAddress() {
   const q = document.getElementById("address").value.trim();
@@ -149,13 +162,13 @@ async function startSearch(lat, lon, label) {
   if (originMarker) map.removeLayer(originMarker);
   originMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
 
-  await showClosestBusStop(lat, lon);
+  await showClosestBusToUser(lat, lon);
   await findNearestPlaces(lat, lon);
 }
 
-/* ================= BUS STOP (FIXED) ================= */
+/* ================= USER BUS STOP ================= */
 
-async function showClosestBusStop(lat, lon) {
+async function showClosestBusToUser(lat, lon) {
   const box = document.getElementById("busBox");
   box.style.display = "block";
   box.innerHTML = "<strong>Closest bus stop to you:</strong><br>Searching…";
@@ -164,15 +177,18 @@ async function showClosestBusStop(lat, lon) {
   box.innerHTML = `<strong>Closest bus stop to you:</strong><br>${bus}`;
 }
 
+/* ================= BUS STOP (UK-CORRECT) ================= */
+
 async function findClosestBusStop(lat, lon) {
   const query = `
-    [out:json][timeout:8];
+    [out:json][timeout:10];
     (
       node["highway"="bus_stop"](around:${SEARCH_RADIUS},${lat},${lon});
       node["public_transport"="platform"](around:${SEARCH_RADIUS},${lat},${lon});
-      node["public_transport"="stop_position"](around:${SEARCH_RADIUS},${lat},${lon});
+      way["public_transport"="platform"](around:${SEARCH_RADIUS},${lat},${lon});
+      relation["public_transport"="stop_area"](around:${SEARCH_RADIUS},${lat},${lon});
     );
-    out tags;
+    out center tags;
   `;
 
   const r = await fetch("https://overpass.kumi.systems/api/interpreter", {
@@ -182,17 +198,18 @@ async function findClosestBusStop(lat, lon) {
   const d = await r.json();
 
   const stops = (d.elements || [])
-    .map(s => ({
-      name: s.tags?.name || "Unnamed bus stop",
-      routes: s.tags?.route_ref || "Not available",
-      lat: Number(s.lat),
-      lon: Number(s.lon)
-    }))
-    .filter(s => Number.isFinite(s.lat) && Number.isFinite(s.lon))
-    .map(s => ({
-      ...s,
-      dist: getDistance(lat, lon, s.lat, s.lon)
-    }))
+    .map(el => {
+      const lat2 = el.lat ?? el.center?.lat;
+      const lon2 = el.lon ?? el.center?.lon;
+      if (!Number.isFinite(lat2) || !Number.isFinite(lon2)) return null;
+
+      return {
+        name: el.tags?.name || "Unnamed bus stop",
+        routes: el.tags?.route_ref || el.tags?.routes || "Not available",
+        dist: getDistance(lat, lon, lat2, lon2)
+      };
+    })
+    .filter(Boolean)
     .sort((a,b)=>a.dist-b.dist);
 
   if (!stops.length) return "🚌 No bus stop nearby";
@@ -238,13 +255,11 @@ async function findNearestPlaces(originLat, originLon) {
     });
     const d = await r.json();
 
-    places = d.elements
-      .map(e => ({
-        name: e.tags?.name || "Unnamed",
-        lat: Number(e.lat ?? e.center?.lat),
-        lon: Number(e.lon ?? e.center?.lon)
-      }))
-      .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
+    places = d.elements.map(e => ({
+      name: e.tags?.name || "Unnamed",
+      lat: Number(e.lat ?? e.center?.lat),
+      lon: Number(e.lon ?? e.center?.lon)
+    })).filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lon));
   }
 
   places = places
@@ -255,12 +270,14 @@ async function findNearestPlaces(originLat, originLon) {
   displayResults(places, originLat, originLon);
 }
 
+/* ================= DISPLAY ================= */
+
 function displayResults(results, lat, lon) {
   let html = "<strong>Closest results:</strong><br><br>";
   const bounds = [[lat, lon]];
 
   results.forEach((p,i)=>{
-    markers.push(L.marker([p.lat,p.lon]).addTo(map));
+    placeMarkers.push(L.marker([p.lat,p.lon]).addTo(map));
     bounds.push([p.lat,p.lon]);
 
     html += `
